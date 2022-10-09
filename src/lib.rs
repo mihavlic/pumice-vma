@@ -4,8 +4,9 @@ mod definitions;
 pub mod ffi;
 pub use definitions::*;
 
-use ash::prelude::VkResult;
-use ash::vk;
+use pumice::util::impl_macros::ObjectHandle;
+use pumice::util::result::VulkanResult;
+use pumice::vk;
 use std::mem;
 
 /// Main allocator object
@@ -26,7 +27,7 @@ pub type AllocatorPool = ffi::VmaPool;
 
 /// Represents single memory allocation.
 ///
-/// It may be either dedicated block of `ash::vk::DeviceMemory` or a specific region of a
+/// It may be either dedicated block of `pumice::vk::DeviceMemory` or a specific region of a
 /// bigger block of this type plus unique offset.
 ///
 /// Although the library provides convenience functions that create a Vulkan buffer or image,
@@ -66,9 +67,9 @@ impl AllocationInfo {
     /// It can change after call to `Allocator::defragment` if this allocation is passed
     /// to the function, or if allocation is lost.
     ///
-    /// If the allocation is lost, it is equal to `ash::vk::DeviceMemory::null()`.
+    /// If the allocation is lost, it is equal to `pumice::vk::DeviceMemory::null()`.
     #[inline(always)]
-    pub fn get_device_memory(&self) -> ash::vk::DeviceMemory {
+    pub fn get_device_memory(&self) -> pumice::vk::DeviceMemory {
         self.internal.deviceMemory
     }
 
@@ -128,20 +129,23 @@ impl Default for AllocatorCreateFlags {
     }
 }
 
-/// Converts a raw result into an ash result.
+/// Converts a raw result into an pumice result.
 #[inline]
-fn ffi_to_result(result: vk::Result) -> VkResult<()> {
-    match result {
-        vk::Result::SUCCESS => Ok(()),
-        _ => Err(result),
-    }
+fn ffi_to_result(result: vk::Result) -> VulkanResult<()> {
+    VulkanResult::new(result, ())
+}
+
+macro_rules! try_ffi_to_result {
+    ($e:expr) => {
+        pumice::try_vk!(VulkanResult::new($e, ()))
+    };
 }
 
 #[derive(Debug)]
 pub struct DefragmentationContext {
     pub(crate) internal: ffi::VmaDefragmentationContext,
     pub(crate) stats: ffi::VmaDefragmentationStats,
-    pub(crate) changed: Vec<ash::vk::Bool32>,
+    pub(crate) changed: Vec<pumice::vk::Bool32>,
 }
 
 /// Optional configuration parameters to be passed to `Allocator::defragment`
@@ -152,7 +156,7 @@ pub struct DefragmentationInfo {
     /// Maximum total numbers of bytes that can be copied while moving
     /// allocations to different places.
     ///
-    /// Default is `ash::vk::WHOLE_SIZE`, which means no limit.
+    /// Default is `pumice::vk::WHOLE_SIZE`, which means no limit.
     pub max_bytes_to_move: usize,
 
     /// Maximum number of allocations that can be moved to different place.
@@ -165,7 +169,7 @@ pub struct DefragmentationInfo {
 impl Default for DefragmentationInfo {
     fn default() -> Self {
         DefragmentationInfo {
-            max_bytes_to_move: ash::vk::WHOLE_SIZE as usize,
+            max_bytes_to_move: pumice::vk::WHOLE_SIZE as usize,
             max_allocations_to_move: std::u32::MAX,
         }
     }
@@ -187,7 +191,7 @@ pub struct DefragmentationInfo2<'a> {
     ///
     /// All the allocations in the specified pools can be moved during defragmentation
     /// and there is no way to check if they were really moved as in `allocations_changed`,
-    /// so you must query all the allocations in all these pools for new `ash::vk::DeviceMemory`
+    /// so you must query all the allocations in all these pools for new `pumice::vk::DeviceMemory`
     /// and offset using `Allocator::get_allocation_info` if you might need to recreate buffers
     /// and images bound to them.
     ///
@@ -199,8 +203,8 @@ pub struct DefragmentationInfo2<'a> {
 
     /// Maximum total numbers of bytes that can be copied while moving allocations to different places using transfers on CPU side, like `memcpy()`, `memmove()`.
     ///
-    /// `ash::vk::WHOLE_SIZE` means no limit.
-    pub max_cpu_bytes_to_move: ash::vk::DeviceSize,
+    /// `pumice::vk::WHOLE_SIZE` means no limit.
+    pub max_cpu_bytes_to_move: pumice::vk::DeviceSize,
 
     /// Maximum number of allocations that can be moved to a different place using transfers on CPU side, like `memcpy()`, `memmove()`.
     ///
@@ -209,8 +213,8 @@ pub struct DefragmentationInfo2<'a> {
 
     /// Maximum total numbers of bytes that can be copied while moving allocations to different places using transfers on GPU side, posted to `command_buffer`.
     ///
-    /// `ash::vk::WHOLE_SIZE` means no limit.
-    pub max_gpu_bytes_to_move: ash::vk::DeviceSize,
+    /// `pumice::vk::WHOLE_SIZE` means no limit.
+    pub max_gpu_bytes_to_move: pumice::vk::DeviceSize,
 
     /// Maximum number of allocations that can be moved to a different place using transfers on GPU side, posted to `command_buffer`.
     ///
@@ -224,7 +228,7 @@ pub struct DefragmentationInfo2<'a> {
     /// You need to submit it and make sure it finished execution before calling `Allocator::defragmentation_end`.
     ///
     /// Passing `None` means that only CPU defragmentation will be performed.
-    pub command_buffer: Option<ash::vk::CommandBuffer>,
+    pub command_buffer: Option<pumice::vk::CommandBuffer>,
 }
 
 /// Statistics returned by `Allocator::defragment`
@@ -233,128 +237,239 @@ pub struct DefragmentationStats {
     /// Total number of bytes that have been copied while moving allocations to different places.
     pub bytes_moved: usize,
 
-    /// Total number of bytes that have been released to the system by freeing empty `ash::vk::DeviceMemory` objects.
+    /// Total number of bytes that have been released to the system by freeing empty `pumice::vk::DeviceMemory` objects.
     pub bytes_freed: usize,
 
     /// Number of allocations that have been moved to different places.
     pub allocations_moved: u32,
 
-    /// Number of empty `ash::vk::DeviceMemory` objects that have been released to the system.
+    /// Number of empty `pumice::vk::DeviceMemory` objects that have been released to the system.
     pub device_memory_blocks_freed: u32,
 }
 
 impl Allocator {
     /// Constructor a new `Allocator` using the provided options.
-    pub fn new(mut create_info: AllocatorCreateInfo) -> VkResult<Self> {
+    pub fn new(mut create_info: AllocatorCreateInfo) -> VulkanResult<Self> {
         unsafe extern "system" fn get_instance_proc_addr_stub(
-            _instance: ash::vk::Instance,
+            _instance: pumice::vk::Instance,
             _p_name: *const ::std::os::raw::c_char,
-        ) -> ash::vk::PFN_vkVoidFunction {
+        ) -> pumice::vk::PfnVoidFunction {
             panic!("VMA_DYNAMIC_VULKAN_FUNCTIONS is unsupported")
         }
 
         unsafe extern "system" fn get_get_device_proc_stub(
-            _device: ash::vk::Device,
+            _device: pumice::vk::Device,
             _p_name: *const ::std::os::raw::c_char,
-        ) -> ash::vk::PFN_vkVoidFunction {
+        ) -> pumice::vk::PfnVoidFunction {
             panic!("VMA_DYNAMIC_VULKAN_FUNCTIONS is unsupported")
         }
 
-        let routed_functions = ffi::VmaVulkanFunctions {
-            vkGetInstanceProcAddr: get_instance_proc_addr_stub,
-            vkGetDeviceProcAddr: get_get_device_proc_stub,
-            vkGetPhysicalDeviceProperties: create_info
-                .instance
-                .fp_v1_0()
-                .get_physical_device_properties,
-            vkGetPhysicalDeviceMemoryProperties: create_info
-                .instance
-                .fp_v1_0()
-                .get_physical_device_memory_properties,
-            vkAllocateMemory: create_info.device.fp_v1_0().allocate_memory,
-            vkFreeMemory: create_info.device.fp_v1_0().free_memory,
-            vkMapMemory: create_info.device.fp_v1_0().map_memory,
-            vkUnmapMemory: create_info.device.fp_v1_0().unmap_memory,
-            vkFlushMappedMemoryRanges: create_info.device.fp_v1_0().flush_mapped_memory_ranges,
-            vkInvalidateMappedMemoryRanges: create_info
-                .device
-                .fp_v1_0()
-                .invalidate_mapped_memory_ranges,
-            vkBindBufferMemory: create_info.device.fp_v1_0().bind_buffer_memory,
-            vkBindImageMemory: create_info.device.fp_v1_0().bind_image_memory,
-            vkGetBufferMemoryRequirements: create_info
-                .device
-                .fp_v1_0()
-                .get_buffer_memory_requirements,
-            vkGetImageMemoryRequirements: create_info
-                .device
-                .fp_v1_0()
-                .get_image_memory_requirements,
-            vkCreateBuffer: create_info.device.fp_v1_0().create_buffer,
-            vkDestroyBuffer: create_info.device.fp_v1_0().destroy_buffer,
-            vkCreateImage: create_info.device.fp_v1_0().create_image,
-            vkDestroyImage: create_info.device.fp_v1_0().destroy_image,
-            vkCmdCopyBuffer: create_info.device.fp_v1_0().cmd_copy_buffer,
-            vkGetBufferMemoryRequirements2KHR: create_info
-                .device
-                .fp_v1_1()
-                .get_buffer_memory_requirements2,
-            vkGetImageMemoryRequirements2KHR: create_info
-                .device
-                .fp_v1_1()
-                .get_image_memory_requirements2,
-            vkBindBufferMemory2KHR: create_info.device.fp_v1_1().bind_buffer_memory2,
-            vkBindImageMemory2KHR: create_info.device.fp_v1_1().bind_image_memory2,
-            vkGetPhysicalDeviceMemoryProperties2KHR: create_info
-                .instance
-                .fp_v1_1()
-                .get_physical_device_memory_properties2,
-        };
+        let instance = unsafe { &(*create_info.instance.table()) };
+        let device = unsafe { &(*create_info.device.table()) };
+
+        // Since we do not initialize function pointers with stub functions and wrap them in Option instead
+        // we must generate the stubs here ourselves, this macro is creating these stubs and then initializing
+        // VmaVulkanFunctions with the provided function pointer or a stub if null.
+        // ATTENTION
+        // The function signatures are the same as the string at the bottom of build.rs, keep them exactly the same for easy pasting!
+        macro_rules! load_functions {
+            (
+                $load_to:ident =
+                $(
+                    $name_orig:ident, $src:ident: unsafe extern "system" fn $name:ident (
+                        $(
+                            $arg:ident: $typ:ty,
+                        )+
+                    ) $(-> $ret:ty)?
+                ),+
+            ) => {
+                $(
+                    unsafe extern "system" fn $name (
+                        $(
+                            _: $typ
+                        ),+
+                    ) $(-> $ret)? {
+                        panic!(concat!(stringify!($name_orig), " was passed as null to VMA and was now called."))
+                    }
+                )+
+
+                let $load_to = ffi::VmaVulkanFunctions {
+                    vkGetInstanceProcAddr: get_instance_proc_addr_stub,
+                    vkGetDeviceProcAddr: get_get_device_proc_stub,
+                    $(
+                        $name_orig: $src.$name.unwrap_or($name as _)
+                    ),+
+                };
+            };
+        }
+
+        load_functions!(
+            routed_functions =
+            vkGetPhysicalDeviceProperties, instance: unsafe extern "system" fn get_physical_device_properties (
+                physical_device: pumice::vk10::PhysicalDevice,
+                p_properties: *mut pumice::vk10::PhysicalDeviceProperties,
+            ),
+            vkGetPhysicalDeviceMemoryProperties, instance: unsafe extern "system" fn get_physical_device_memory_properties (
+                physical_device: pumice::vk10::PhysicalDevice,
+                p_memory_properties: *mut pumice::vk10::PhysicalDeviceMemoryProperties,
+            ),
+            vkAllocateMemory, device: unsafe extern "system" fn allocate_memory (
+                device: pumice::vk10::Device,
+                p_allocate_info: *const pumice::vk10::MemoryAllocateInfo,
+                p_allocator: *const pumice::vk10::AllocationCallbacks,
+                p_memory: *mut pumice::vk10::DeviceMemory,
+            ) -> pumice::vk10::Result,
+            vkFreeMemory, device: unsafe extern "system" fn free_memory (
+                device: pumice::vk10::Device,
+                memory: pumice::vk10::DeviceMemory,
+                p_allocator: *const pumice::vk10::AllocationCallbacks,
+            ),
+            vkMapMemory, device: unsafe extern "system" fn map_memory (
+                device: pumice::vk10::Device,
+                memory: pumice::vk10::DeviceMemory,
+                offset: pumice::vk10::DeviceSize,
+                size: pumice::vk10::DeviceSize,
+                flags: pumice::vk10::MemoryMapFlags,
+                pp_data: *mut *mut std::os::raw::c_void,
+            ) -> pumice::vk10::Result,
+            vkUnmapMemory, device: unsafe extern "system" fn unmap_memory (
+                device: pumice::vk10::Device,
+                memory: pumice::vk10::DeviceMemory,
+            ),
+            vkFlushMappedMemoryRanges, device: unsafe extern "system" fn flush_mapped_memory_ranges (
+                device: pumice::vk10::Device,
+                memory_range_count: u32,
+                p_memory_ranges: *const pumice::vk10::MappedMemoryRange,
+            ) -> pumice::vk10::Result,
+            vkInvalidateMappedMemoryRanges, device: unsafe extern "system" fn invalidate_mapped_memory_ranges (
+                device: pumice::vk10::Device,
+                memory_range_count: u32,
+                p_memory_ranges: *const pumice::vk10::MappedMemoryRange,
+            ) -> pumice::vk10::Result,
+            vkBindBufferMemory, device: unsafe extern "system" fn bind_buffer_memory (
+                device: pumice::vk10::Device,
+                buffer: pumice::vk10::Buffer,
+                memory: pumice::vk10::DeviceMemory,
+                memory_offset: pumice::vk10::DeviceSize,
+                ) -> pumice::vk10::Result,
+            vkBindImageMemory, device: unsafe extern "system" fn bind_image_memory (
+                device: pumice::vk10::Device,
+                image: pumice::vk10::Image,
+                memory: pumice::vk10::DeviceMemory,
+                memory_offset: pumice::vk10::DeviceSize,
+            ) -> pumice::vk10::Result,
+            vkGetBufferMemoryRequirements, device: unsafe extern "system" fn get_buffer_memory_requirements (
+                device: pumice::vk10::Device,
+                buffer: pumice::vk10::Buffer,
+                p_memory_requirements: *mut pumice::vk10::MemoryRequirements,
+            ),
+            vkGetImageMemoryRequirements, device: unsafe extern "system" fn get_image_memory_requirements (
+                device: pumice::vk10::Device,
+                image: pumice::vk10::Image,
+                p_memory_requirements: *mut pumice::vk10::MemoryRequirements,
+            ),
+            vkCreateBuffer, device: unsafe extern "system" fn create_buffer (
+                device: pumice::vk10::Device,
+                p_create_info: *const pumice::vk10::BufferCreateInfo,
+                p_allocator: *const pumice::vk10::AllocationCallbacks,
+                p_buffer: *mut pumice::vk10::Buffer,
+            ) -> pumice::vk10::Result,
+            vkDestroyBuffer, device: unsafe extern "system" fn destroy_buffer (
+                device: pumice::vk10::Device,
+                buffer: pumice::vk10::Buffer,
+                p_allocator: *const pumice::vk10::AllocationCallbacks,
+            ),
+            vkCreateImage, device: unsafe extern "system" fn create_image (
+                    device: pumice::vk10::Device,
+                    p_create_info: *const pumice::vk10::ImageCreateInfo,
+                    p_allocator: *const pumice::vk10::AllocationCallbacks,
+                    p_image: *mut pumice::vk10::Image,
+            ) -> pumice::vk10::Result,
+            vkDestroyImage, device: unsafe extern "system" fn destroy_image (
+                device: pumice::vk10::Device,
+                image: pumice::vk10::Image,
+                p_allocator: *const pumice::vk10::AllocationCallbacks,
+            ),
+            vkCmdCopyBuffer, device: unsafe extern "system" fn cmd_copy_buffer (
+                command_buffer: pumice::vk10::CommandBuffer,
+                src_buffer: pumice::vk10::Buffer,
+                dst_buffer: pumice::vk10::Buffer,
+                region_count: u32,
+                p_regions: *const pumice::vk10::BufferCopy,
+            ),
+            vkGetBufferMemoryRequirements2KHR, device: unsafe extern "system" fn get_buffer_memory_requirements_2 (
+                device: pumice::vk10::Device,
+                p_info: *const pumice::vk11::BufferMemoryRequirementsInfo2,
+                p_memory_requirements: *mut pumice::vk11::MemoryRequirements2,
+            ),
+            vkGetImageMemoryRequirements2KHR, device: unsafe extern "system" fn get_image_memory_requirements_2 (
+                device: pumice::vk10::Device,
+                p_info: *const pumice::vk11::ImageMemoryRequirementsInfo2,
+                p_memory_requirements: *mut pumice::vk11::MemoryRequirements2,
+            ),
+            vkBindBufferMemory2KHR, device: unsafe extern "system" fn bind_buffer_memory_2 (
+                device: pumice::vk10::Device,
+                bind_info_count: u32,
+                p_bind_infos: *const pumice::vk11::BindBufferMemoryInfo,
+            ) -> pumice::vk10::Result,
+            vkBindImageMemory2KHR, device: unsafe extern "system" fn bind_image_memory_2 (
+                device: pumice::vk10::Device,
+                bind_info_count: u32,
+                p_bind_infos: *const pumice::vk11::BindImageMemoryInfo,
+            ) -> pumice::vk10::Result,
+            vkGetPhysicalDeviceMemoryProperties2KHR, instance: unsafe extern "system" fn get_physical_device_memory_properties_2 (
+                physical_device: pumice::vk10::PhysicalDevice,
+                p_memory_properties: *mut pumice::vk11::PhysicalDeviceMemoryProperties2,
+            )
+        );
+
         create_info.inner.pVulkanFunctions = &routed_functions;
         unsafe {
             let mut internal: ffi::VmaAllocator = mem::zeroed();
-            ffi_to_result(ffi::vmaCreateAllocator(
+            try_ffi_to_result!(ffi::vmaCreateAllocator(
                 &create_info.inner as *const _,
                 &mut internal,
-            ))?;
+            ));
 
-            Ok(Allocator { internal })
+            VulkanResult::new_ok(Allocator { internal })
         }
     }
 
-    /// The allocator fetches `ash::vk::PhysicalDeviceProperties` from the physical device.
+    /// The allocator fetches `pumice::vk::PhysicalDeviceProperties` from the physical device.
     /// You can get it here, without fetching it again on your own.
-    pub unsafe fn get_physical_device_properties(&self) -> VkResult<vk::PhysicalDeviceProperties> {
+    pub unsafe fn get_physical_device_properties(
+        &self,
+    ) -> VulkanResult<vk::PhysicalDeviceProperties> {
         let mut properties = vk::PhysicalDeviceProperties::default();
         ffi::vmaGetPhysicalDeviceProperties(
             self.internal,
             &mut properties as *mut _ as *mut *const _,
         );
 
-        Ok(properties)
+        VulkanResult::new_ok(properties)
     }
 
-    /// The allocator fetches `ash::vk::PhysicalDeviceMemoryProperties` from the physical device.
+    /// The allocator fetches `pumice::vk::PhysicalDeviceMemoryProperties` from the physical device.
     /// You can get it here, without fetching it again on your own.
-    pub unsafe fn get_memory_properties(&self) -> VkResult<vk::PhysicalDeviceMemoryProperties> {
+    pub unsafe fn get_memory_properties(&self) -> VulkanResult<vk::PhysicalDeviceMemoryProperties> {
         let mut properties = vk::PhysicalDeviceMemoryProperties::default();
         ffi::vmaGetMemoryProperties(self.internal, &mut properties as *mut _ as *mut *const _);
 
-        Ok(properties)
+        VulkanResult::new_ok(properties)
     }
 
-    /// Given a memory type index, returns `ash::vk::MemoryPropertyFlags` of this memory type.
+    /// Given a memory type index, returns `pumice::vk::MemoryPropertyFlags` of this memory type.
     ///
     /// This is just a convenience function; the same information can be obtained using
     /// `Allocator::get_memory_properties`.
     pub unsafe fn get_memory_type_properties(
         &self,
         memory_type_index: u32,
-    ) -> VkResult<vk::MemoryPropertyFlags> {
+    ) -> VulkanResult<vk::MemoryPropertyFlags> {
         let mut flags = vk::MemoryPropertyFlags::empty();
         ffi::vmaGetMemoryTypeProperties(self.internal, memory_type_index, &mut flags);
 
-        Ok(flags)
+        VulkanResult::new_ok(flags)
     }
 
     /// Sets index of the current frame.
@@ -368,14 +483,14 @@ impl Allocator {
     }
 
     /// Retrieves statistics from current state of the `Allocator`.
-    pub unsafe fn calculate_stats(&self) -> VkResult<ffi::VmaStats> {
+    pub unsafe fn calculate_stats(&self) -> VulkanResult<ffi::VmaStats> {
         let mut vma_stats: ffi::VmaStats = mem::zeroed();
         ffi::vmaCalculateStats(self.internal, &mut vma_stats);
-        Ok(vma_stats)
+        VulkanResult::new_ok(vma_stats)
     }
 
     /// Builds and returns statistics in `JSON` format.
-    pub unsafe fn build_stats_string(&self, detailed_map: bool) -> VkResult<String> {
+    pub unsafe fn build_stats_string(&self, detailed_map: bool) -> VulkanResult<String> {
         let mut stats_string: *mut ::std::os::raw::c_char = ::std::ptr::null_mut();
         ffi::vmaBuildStatsString(
             self.internal,
@@ -383,7 +498,7 @@ impl Allocator {
             if detailed_map { 1 } else { 0 },
         );
 
-        Ok(if stats_string.is_null() {
+        VulkanResult::new_ok(if stats_string.is_null() {
             String::new()
         } else {
             let result = std::ffi::CStr::from_ptr(stats_string)
@@ -403,7 +518,7 @@ impl Allocator {
     /// - Matches intended usage.
     /// - Has as many flags from `allocation_info.preferred_flags` as possible.
     ///
-    /// Returns ash::vk::Result::ERROR_FEATURE_NOT_PRESENT if not found. Receiving such a result
+    /// Returns pumice::vk::Result::ERROR_FEATURE_NOT_PRESENT if not found. Receiving such a result
     /// from this function or any other allocating function probably means that your
     /// device doesn't support any memory type with requested features for the specific
     /// type of resource you want to use it for. Please check parameters of your
@@ -412,16 +527,16 @@ impl Allocator {
         &self,
         memory_type_bits: u32,
         allocation_info: &AllocationCreateInfo,
-    ) -> VkResult<u32> {
+    ) -> VulkanResult<u32> {
         let mut memory_type_index: u32 = 0;
-        ffi_to_result(ffi::vmaFindMemoryTypeIndex(
+        try_ffi_to_result!(ffi::vmaFindMemoryTypeIndex(
             self.internal,
             memory_type_bits,
             &allocation_info.inner,
             &mut memory_type_index,
-        ))?;
+        ));
 
-        Ok(memory_type_index)
+        VulkanResult::new_ok(memory_type_index)
     }
 
     /// Helps to find memory type index, given buffer info and allocation info.
@@ -430,24 +545,24 @@ impl Allocator {
     /// It internally creates a temporary, dummy buffer that never has memory bound.
     /// It is just a convenience function, equivalent to calling:
     ///
-    /// - `ash::vk::Device::create_buffer`
-    /// - `ash::vk::Device::get_buffer_memory_requirements`
+    /// - `pumice::vk::Device::create_buffer`
+    /// - `pumice::vk::Device::get_buffer_memory_requirements`
     /// - `Allocator::find_memory_type_index`
-    /// - `ash::vk::Device::destroy_buffer`
+    /// - `pumice::vk::Device::destroy_buffer`
     pub unsafe fn find_memory_type_index_for_buffer_info(
         &self,
-        buffer_info: &ash::vk::BufferCreateInfo,
+        buffer_info: &pumice::vk::BufferCreateInfo,
         allocation_info: &AllocationCreateInfo,
-    ) -> VkResult<u32> {
+    ) -> VulkanResult<u32> {
         let mut memory_type_index: u32 = 0;
-        ffi_to_result(ffi::vmaFindMemoryTypeIndexForBufferInfo(
+        try_ffi_to_result!(ffi::vmaFindMemoryTypeIndexForBufferInfo(
             self.internal,
             buffer_info,
             &allocation_info.inner,
             &mut memory_type_index,
-        ))?;
+        ));
 
-        Ok(memory_type_index)
+        VulkanResult::new_ok(memory_type_index)
     }
 
     /// Helps to find memory type index, given image info and allocation info.
@@ -456,35 +571,35 @@ impl Allocator {
     /// It internally creates a temporary, dummy image that never has memory bound.
     /// It is just a convenience function, equivalent to calling:
     ///
-    /// - `ash::vk::Device::create_image`
-    /// - `ash::vk::Device::get_image_memory_requirements`
+    /// - `pumice::vk::Device::create_image`
+    /// - `pumice::vk::Device::get_image_memory_requirements`
     /// - `Allocator::find_memory_type_index`
-    /// - `ash::vk::Device::destroy_image`
+    /// - `pumice::vk::Device::destroy_image`
     pub unsafe fn find_memory_type_index_for_image_info(
         &self,
-        image_info: ash::vk::ImageCreateInfo,
+        image_info: pumice::vk::ImageCreateInfo,
         allocation_info: &AllocationCreateInfo,
-    ) -> VkResult<u32> {
+    ) -> VulkanResult<u32> {
         let mut memory_type_index: u32 = 0;
-        ffi_to_result(ffi::vmaFindMemoryTypeIndexForImageInfo(
+        try_ffi_to_result!(ffi::vmaFindMemoryTypeIndexForImageInfo(
             self.internal,
             &image_info,
             &allocation_info.inner,
             &mut memory_type_index,
-        ))?;
+        ));
 
-        Ok(memory_type_index)
+        VulkanResult::new_ok(memory_type_index)
     }
 
     /// Allocates Vulkan device memory and creates `AllocatorPool` object.
-    pub unsafe fn create_pool(&self, create_info: &PoolCreateInfo) -> VkResult<AllocatorPool> {
+    pub unsafe fn create_pool(&self, create_info: &PoolCreateInfo) -> VulkanResult<AllocatorPool> {
         let mut ffi_pool: ffi::VmaPool = mem::zeroed();
-        ffi_to_result(ffi::vmaCreatePool(
+        try_ffi_to_result!(ffi::vmaCreatePool(
             self.internal,
             &create_info.inner,
             &mut ffi_pool,
-        ))?;
-        Ok(ffi_pool)
+        ));
+        VulkanResult::new_ok(ffi_pool)
     }
 
     /// Destroys `AllocatorPool` object and frees Vulkan device memory.
@@ -493,25 +608,25 @@ impl Allocator {
     }
 
     /// Retrieves statistics of existing `AllocatorPool` object.
-    pub unsafe fn get_pool_stats(&self, pool: AllocatorPool) -> VkResult<ffi::VmaPoolStats> {
+    pub unsafe fn get_pool_stats(&self, pool: AllocatorPool) -> VulkanResult<ffi::VmaPoolStats> {
         let mut pool_stats: ffi::VmaPoolStats = mem::zeroed();
         ffi::vmaGetPoolStats(self.internal, pool, &mut pool_stats);
-        Ok(pool_stats)
+        VulkanResult::new_ok(pool_stats)
     }
 
     /// Checks magic number in margins around all allocations in given memory pool in search for corruptions.
     ///
     /// Corruption detection is enabled only when `VMA_DEBUG_DETECT_CORRUPTION` macro is defined to nonzero,
     /// `VMA_DEBUG_MARGIN` is defined to nonzero and the pool is created in memory type that is
-    /// `ash::vk::MemoryPropertyFlags::HOST_VISIBLE` and `ash::vk::MemoryPropertyFlags::HOST_COHERENT`.
+    /// `pumice::vk::MemoryPropertyFlags::HOST_VISIBLE` and `pumice::vk::MemoryPropertyFlags::HOST_COHERENT`.
     ///
     /// Possible error values:
     ///
-    /// - `ash::vk::Result::ERROR_FEATURE_NOT_PRESENT` - corruption detection is not enabled for specified pool.
-    /// - `ash::vk::Result::ERROR_VALIDATION_FAILED_EXT` - corruption detection has been performed and found memory corruptions around one of the allocations.
+    /// - `pumice::vk::Result::ERROR_FEATURE_NOT_PRESENT` - corruption detection is not enabled for specified pool.
+    /// - `pumice::vk::Result::ERROR_VALIDATION_FAILED_EXT` - corruption detection has been performed and found memory corruptions around one of the allocations.
     ///   `VMA_ASSERT` is also fired in that case.
     /// - Other value: Error returned by Vulkan, e.g. memory mapping failure.
-    pub unsafe fn check_pool_corruption(&self, pool: AllocatorPool) -> VkResult<()> {
+    pub unsafe fn check_pool_corruption(&self, pool: AllocatorPool) -> VulkanResult<()> {
         ffi_to_result(ffi::vmaCheckPoolCorruption(self.internal, pool))
     }
 
@@ -523,20 +638,20 @@ impl Allocator {
     /// `Allocator::create_buffer`, `Allocator::create_image` instead whenever possible.
     pub unsafe fn allocate_memory(
         &self,
-        memory_requirements: &ash::vk::MemoryRequirements,
+        memory_requirements: &pumice::vk::MemoryRequirements,
         create_info: &AllocationCreateInfo,
-    ) -> VkResult<(Allocation, AllocationInfo)> {
+    ) -> VulkanResult<(Allocation, AllocationInfo)> {
         let mut allocation: Allocation = mem::zeroed();
         let mut allocation_info: AllocationInfo = mem::zeroed();
-        ffi_to_result(ffi::vmaAllocateMemory(
+        try_ffi_to_result!(ffi::vmaAllocateMemory(
             self.internal,
             memory_requirements,
             &create_info.inner,
             &mut allocation,
             &mut allocation_info.internal,
-        ))?;
+        ));
 
-        Ok((allocation, allocation_info))
+        VulkanResult::new_ok((allocation, allocation_info))
     }
 
     /// General purpose memory allocation for multiple allocation objects at once.
@@ -550,28 +665,28 @@ impl Allocator {
     /// All allocations are made using same parameters. All of them are created out of the same memory pool and type.
     pub unsafe fn allocate_memory_pages(
         &self,
-        memory_requirements: &ash::vk::MemoryRequirements,
+        memory_requirements: &pumice::vk::MemoryRequirements,
         create_info: &AllocationCreateInfo,
         allocation_count: usize,
-    ) -> VkResult<Vec<(Allocation, AllocationInfo)>> {
+    ) -> VulkanResult<Vec<(Allocation, AllocationInfo)>> {
         let mut allocations: Vec<ffi::VmaAllocation> = vec![mem::zeroed(); allocation_count];
         let mut allocation_info: Vec<ffi::VmaAllocationInfo> =
             vec![mem::zeroed(); allocation_count];
-        ffi_to_result(ffi::vmaAllocateMemoryPages(
+        try_ffi_to_result!(ffi::vmaAllocateMemoryPages(
             self.internal,
             memory_requirements,
             &create_info.inner,
             allocation_count,
             allocations.as_mut_ptr(),
             allocation_info.as_mut_ptr(),
-        ))?;
+        ));
 
         let it = allocations.iter().zip(allocation_info.iter());
         let allocations: Vec<(Allocation, AllocationInfo)> = it
             .map(|(alloc, info)| (*alloc, AllocationInfo { internal: *info }))
             .collect();
 
-        Ok(allocations)
+        VulkanResult::new_ok(allocations)
     }
 
     /// Buffer specialized memory allocation.
@@ -579,20 +694,20 @@ impl Allocator {
     /// You should free the memory using `Allocator::free_memory` or 'Allocator::free_memory_pages'.
     pub unsafe fn allocate_memory_for_buffer(
         &self,
-        buffer: ash::vk::Buffer,
+        buffer: pumice::vk::Buffer,
         create_info: &AllocationCreateInfo,
-    ) -> VkResult<(Allocation, AllocationInfo)> {
+    ) -> VulkanResult<(Allocation, AllocationInfo)> {
         let mut allocation: Allocation = mem::zeroed();
         let mut allocation_info: AllocationInfo = mem::zeroed();
-        ffi_to_result(ffi::vmaAllocateMemoryForBuffer(
+        try_ffi_to_result!(ffi::vmaAllocateMemoryForBuffer(
             self.internal,
             buffer,
             &create_info.inner,
             &mut allocation,
             &mut allocation_info.internal,
-        ))?;
+        ));
 
-        Ok((allocation, allocation_info))
+        VulkanResult::new_ok((allocation, allocation_info))
     }
 
     /// Image specialized memory allocation.
@@ -600,20 +715,20 @@ impl Allocator {
     /// You should free the memory using `Allocator::free_memory` or 'Allocator::free_memory_pages'.
     pub unsafe fn allocate_memory_for_image(
         &self,
-        image: ash::vk::Image,
+        image: pumice::vk::Image,
         create_info: &AllocationCreateInfo,
-    ) -> VkResult<(Allocation, AllocationInfo)> {
+    ) -> VulkanResult<(Allocation, AllocationInfo)> {
         let mut allocation: Allocation = mem::zeroed();
         let mut allocation_info: AllocationInfo = mem::zeroed();
-        ffi_to_result(ffi::vmaAllocateMemoryForImage(
+        try_ffi_to_result!(ffi::vmaAllocateMemoryForImage(
             self.internal,
             image,
             &create_info.inner,
             &mut allocation,
             &mut allocation_info.internal,
-        ))?;
+        ));
 
-        Ok((allocation, allocation_info))
+        VulkanResult::new_ok((allocation, allocation_info))
     }
 
     /// Frees memory previously allocated using `Allocator::allocate_memory`,
@@ -646,16 +761,19 @@ impl Allocator {
     /// This function also atomically "touches" allocation - marks it as used in current frame,
     /// just like `Allocator::touch_allocation`.
     ///
-    /// If the allocation is in lost state, `allocation.get_device_memory` returns `ash::vk::DeviceMemory::null()`.
+    /// If the allocation is in lost state, `allocation.get_device_memory` returns `pumice::vk::DeviceMemory::null()`.
     ///
     /// Although this function uses atomics and doesn't lock any mutex, so it should be quite efficient,
     /// you can avoid calling it too often.
     ///
     /// If you just want to check if allocation is not lost, `Allocator::touch_allocation` will work faster.
-    pub unsafe fn get_allocation_info(&self, allocation: Allocation) -> VkResult<AllocationInfo> {
+    pub unsafe fn get_allocation_info(
+        &self,
+        allocation: Allocation,
+    ) -> VulkanResult<AllocationInfo> {
         let mut allocation_info: AllocationInfo = mem::zeroed();
         ffi::vmaGetAllocationInfo(self.internal, allocation, &mut allocation_info.internal);
-        Ok(allocation_info)
+        VulkanResult::new_ok(allocation_info)
     }
 
     /// Sets user data in given allocation to new value.
@@ -683,13 +801,13 @@ impl Allocator {
     /// Maps memory represented by given allocation to make it accessible to CPU code.
     /// When succeeded, result is a pointer to first byte of this memory.
     ///
-    /// If the allocation is part of bigger `ash::vk::DeviceMemory` block, the pointer is
+    /// If the allocation is part of bigger `pumice::vk::DeviceMemory` block, the pointer is
     /// correctly offseted to the beginning of region assigned to this particular
     /// allocation.
     ///
     /// Mapping is internally reference-counted and synchronized, so despite raw Vulkan
-    /// function `ash::vk::Device::MapMemory` cannot be used to map same block of
-    /// `ash::vk::DeviceMemory` multiple times simultaneously, it is safe to call this
+    /// function `pumice::vk::Device::MapMemory` cannot be used to map same block of
+    /// `pumice::vk::DeviceMemory` multiple times simultaneously, it is safe to call this
     /// function on allocations assigned to the same memory block. Actual Vulkan memory
     /// will be mapped on first mapping and unmapped on last unmapping.
     ///
@@ -708,19 +826,19 @@ impl Allocator {
     /// time to free the "0-th" mapping made automatically due to `AllocationCreateFlags::MAPPED` flag.
     ///
     /// This function fails when used on allocation made in memory type that is not
-    /// `ash::vk::MemoryPropertyFlags::HOST_VISIBLE`.
+    /// `pumice::vk::MemoryPropertyFlags::HOST_VISIBLE`.
     ///
     /// This function always fails when called for allocation that was created with
     /// `AllocationCreateFlags::CAN_BECOME_LOST` flag. Such allocations cannot be mapped.
-    pub unsafe fn map_memory(&self, allocation: Allocation) -> VkResult<*mut u8> {
+    pub unsafe fn map_memory(&self, allocation: Allocation) -> VulkanResult<*mut u8> {
         let mut mapped_data: *mut ::std::os::raw::c_void = ::std::ptr::null_mut();
-        ffi_to_result(ffi::vmaMapMemory(
+        try_ffi_to_result!(ffi::vmaMapMemory(
             self.internal,
             allocation,
             &mut mapped_data,
-        ))?;
+        ));
 
-        Ok(mapped_data as *mut u8)
+        VulkanResult::new_ok(mapped_data as *mut u8)
     }
 
     /// Unmaps memory represented by given allocation, mapped previously using `Allocator::map_memory`.
@@ -730,19 +848,19 @@ impl Allocator {
 
     /// Flushes memory of given allocation.
     ///
-    /// Calls `ash::vk::Device::FlushMappedMemoryRanges` for memory associated with given range of given allocation.
+    /// Calls `pumice::vk::Device::FlushMappedMemoryRanges` for memory associated with given range of given allocation.
     ///
     /// - `offset` must be relative to the beginning of allocation.
-    /// - `size` can be `ash::vk::WHOLE_SIZE`. It means all memory from `offset` the the end of given allocation.
+    /// - `size` can be `pumice::vk::WHOLE_SIZE`. It means all memory from `offset` the the end of given allocation.
     /// - `offset` and `size` don't have to be aligned; hey are internally rounded down/up to multiple of `nonCoherentAtomSize`.
     /// - If `size` is 0, this call is ignored.
-    /// - If memory type that the `allocation` belongs to is not `ash::vk::MemoryPropertyFlags::HOST_VISIBLE` or it is `ash::vk::MemoryPropertyFlags::HOST_COHERENT`, this call is ignored.
+    /// - If memory type that the `allocation` belongs to is not `pumice::vk::MemoryPropertyFlags::HOST_VISIBLE` or it is `pumice::vk::MemoryPropertyFlags::HOST_COHERENT`, this call is ignored.
     pub unsafe fn flush_allocation(
         &self,
         allocation: Allocation,
         offset: usize,
         size: usize,
-    ) -> VkResult<()> {
+    ) -> VulkanResult<()> {
         ffi_to_result(ffi::vmaFlushAllocation(
             self.internal,
             allocation,
@@ -753,19 +871,19 @@ impl Allocator {
 
     /// Invalidates memory of given allocation.
     ///
-    /// Calls `ash::vk::Device::invalidate_mapped_memory_ranges` for memory associated with given range of given allocation.
+    /// Calls `pumice::vk::Device::invalidate_mapped_memory_ranges` for memory associated with given range of given allocation.
     ///
     /// - `offset` must be relative to the beginning of allocation.
-    /// - `size` can be `ash::vk::WHOLE_SIZE`. It means all memory from `offset` the the end of given allocation.
+    /// - `size` can be `pumice::vk::WHOLE_SIZE`. It means all memory from `offset` the the end of given allocation.
     /// - `offset` and `size` don't have to be aligned. They are internally rounded down/up to multiple of `nonCoherentAtomSize`.
     /// - If `size` is 0, this call is ignored.
-    /// - If memory type that the `allocation` belongs to is not `ash::vk::MemoryPropertyFlags::HOST_VISIBLE` or it is `ash::vk::MemoryPropertyFlags::HOST_COHERENT`, this call is ignored.
+    /// - If memory type that the `allocation` belongs to is not `pumice::vk::MemoryPropertyFlags::HOST_VISIBLE` or it is `pumice::vk::MemoryPropertyFlags::HOST_COHERENT`, this call is ignored.
     pub unsafe fn invalidate_allocation(
         &self,
         allocation: Allocation,
         offset: usize,
         size: usize,
-    ) -> VkResult<()> {
+    ) -> VulkanResult<()> {
         ffi_to_result(ffi::vmaInvalidateAllocation(
             self.internal,
             allocation,
@@ -783,14 +901,14 @@ impl Allocator {
     ///
     /// Possible error values:
     ///
-    /// - `ash::vk::Result::ERROR_FEATURE_NOT_PRESENT` - corruption detection is not enabled for any of specified memory types.
-    /// - `ash::vk::Result::ERROR_VALIDATION_FAILED_EXT` - corruption detection has been performed and found memory corruptions around one of the allocations.
+    /// - `pumice::vk::Result::ERROR_FEATURE_NOT_PRESENT` - corruption detection is not enabled for any of specified memory types.
+    /// - `pumice::vk::Result::ERROR_VALIDATION_FAILED_EXT` - corruption detection has been performed and found memory corruptions around one of the allocations.
     ///   `VMA_ASSERT` is also fired in that case.
     /// - Other value: Error returned by Vulkan, e.g. memory mapping failure.
     pub unsafe fn check_corruption(
         &self,
-        memory_types: ash::vk::MemoryPropertyFlags,
-    ) -> VkResult<()> {
+        memory_types: pumice::vk::MemoryPropertyFlags,
+    ) -> VulkanResult<()> {
         ffi_to_result(ffi::vmaCheckCorruption(
             self.internal,
             memory_types.as_raw(),
@@ -822,10 +940,10 @@ impl Allocator {
     pub unsafe fn defragmentation_begin(
         &self,
         info: &DefragmentationInfo2,
-    ) -> VkResult<DefragmentationContext> {
+    ) -> VulkanResult<DefragmentationContext> {
         let command_buffer = match info.command_buffer {
             Some(command_buffer) => command_buffer,
-            None => ash::vk::CommandBuffer::null(),
+            None => pumice::vk::CommandBuffer::null(),
         };
 
         let mut context = DefragmentationContext {
@@ -836,7 +954,7 @@ impl Allocator {
                 allocationsMoved: 0,
                 deviceMemoryBlocksFreed: 0,
             },
-            changed: vec![ash::vk::FALSE; info.allocations.len()],
+            changed: vec![pumice::vk::FALSE; info.allocations.len()],
         };
 
         let pools = info.pools.unwrap_or(&[]);
@@ -855,14 +973,14 @@ impl Allocator {
             commandBuffer: command_buffer,
         };
 
-        ffi_to_result(ffi::vmaDefragmentationBegin(
+        try_ffi_to_result!(ffi::vmaDefragmentationBegin(
             self.internal,
             &ffi_info,
             &mut context.stats as *mut _,
             &mut context.internal,
-        ))?;
+        ));
 
-        Ok(context)
+        VulkanResult::new_ok(context)
     }
 
     /// Ends defragmentation process.
@@ -871,8 +989,8 @@ impl Allocator {
     pub unsafe fn defragmentation_end(
         &self,
         context: &mut DefragmentationContext,
-    ) -> VkResult<(DefragmentationStats, Vec<bool>)> {
-        ffi_to_result(ffi::vmaDefragmentationEnd(self.internal, context.internal))?;
+    ) -> VulkanResult<(DefragmentationStats, Vec<bool>)> {
+        try_ffi_to_result!(ffi::vmaDefragmentationEnd(self.internal, context.internal));
 
         let changed: Vec<bool> = context.changed.iter().map(|change| *change == 1).collect();
 
@@ -883,7 +1001,7 @@ impl Allocator {
             device_memory_blocks_freed: context.stats.deviceMemoryBlocksFreed,
         };
 
-        Ok((stats, changed))
+        VulkanResult::new_ok((stats, changed))
     }
 
     /// Compacts memory by moving allocations.
@@ -895,16 +1013,16 @@ impl Allocator {
     ///
     /// Possible error values:
     ///
-    /// - `ash::vk::Result::INCOMPLETE` if succeeded but didn't make all possible optimizations because limits specified in
+    /// - `pumice::vk::Result::INCOMPLETE` if succeeded but didn't make all possible optimizations because limits specified in
     ///   `defrag_info` have been reached, negative error code in case of error.
     ///
     /// This function works by moving allocations to different places (different
-    /// `ash::vk::DeviceMemory` objects and/or different offsets) in order to optimize memory
+    /// `pumice::vk::DeviceMemory` objects and/or different offsets) in order to optimize memory
     /// usage. Only allocations that are in `allocations` slice can be moved. All other
     /// allocations are considered nonmovable in this call. Basic rules:
     ///
     /// - Only allocations made in memory types that have
-    ///   `ash::vk::MemoryPropertyFlags::HOST_VISIBLE` and `ash::vk::MemoryPropertyFlags::HOST_COHERENT`
+    ///   `pumice::vk::MemoryPropertyFlags::HOST_VISIBLE` and `pumice::vk::MemoryPropertyFlags::HOST_COHERENT`
     ///   flags can be compacted. You may pass other allocations but it makes no sense -
     ///   these will never be moved.
     ///
@@ -919,7 +1037,7 @@ impl Allocator {
     ///
     /// - You must not pass same `allocation` object multiple times in `allocations` slice.
     ///
-    /// The function also frees empty `ash::vk::DeviceMemory` blocks.
+    /// The function also frees empty `pumice::vk::DeviceMemory` blocks.
     ///
     /// Warning: This function may be time-consuming, so you shouldn't call it too often
     /// (like after every resource creation/destruction).
@@ -934,7 +1052,7 @@ impl Allocator {
         &self,
         allocations: &[Allocation],
         defrag_info: Option<&DefragmentationInfo>,
-    ) -> VkResult<(DefragmentationStats, Vec<bool>)> {
+    ) -> VulkanResult<(DefragmentationStats, Vec<bool>)> {
         let mut ffi_change_list: Vec<vk::Bool32> = vec![0; allocations.len()];
         let ffi_info = match defrag_info {
             Some(info) => ffi::VmaDefragmentationInfo {
@@ -942,24 +1060,24 @@ impl Allocator {
                 maxAllocationsToMove: info.max_allocations_to_move,
             },
             None => ffi::VmaDefragmentationInfo {
-                maxBytesToMove: ash::vk::WHOLE_SIZE,
+                maxBytesToMove: pumice::vk::WHOLE_SIZE,
                 maxAllocationsToMove: std::u32::MAX,
             },
         };
 
         let mut ffi_stats: ffi::VmaDefragmentationStats = mem::zeroed();
-        ffi_to_result(ffi::vmaDefragment(
+        try_ffi_to_result!(ffi::vmaDefragment(
             self.internal,
             allocations.as_ptr() as *mut _,
             allocations.len(),
             ffi_change_list.as_mut_ptr(),
             &ffi_info,
             &mut ffi_stats,
-        ))?;
+        ));
 
         let change_list: Vec<bool> = ffi_change_list
             .iter()
-            .map(|change| *change == ash::vk::TRUE)
+            .map(|change| *change == pumice::vk::TRUE)
             .collect();
 
         let stats = DefragmentationStats {
@@ -969,48 +1087,48 @@ impl Allocator {
             device_memory_blocks_freed: ffi_stats.deviceMemoryBlocksFreed,
         };
 
-        Ok((stats, change_list))
+        VulkanResult::new_ok((stats, change_list))
     }
 
     /// Binds buffer to allocation.
     ///
     /// Binds specified buffer to region of memory represented by specified allocation.
-    /// Gets `ash::vk::DeviceMemory` handle and offset from the allocation.
+    /// Gets `pumice::vk::DeviceMemory` handle and offset from the allocation.
     ///
     /// If you want to create a buffer, allocate memory for it and bind them together separately,
-    /// you should use this function for binding instead of `ash::vk::Device::bind_buffer_memory`,
-    /// because it ensures proper synchronization so that when a `ash::vk::DeviceMemory` object is
-    /// used by multiple allocations, calls to `ash::vk::Device::bind_buffer_memory()` or
-    /// `ash::vk::Device::map_memory()` won't happen from multiple threads simultaneously
+    /// you should use this function for binding instead of `pumice::vk::Device::bind_buffer_memory`,
+    /// because it ensures proper synchronization so that when a `pumice::vk::DeviceMemory` object is
+    /// used by multiple allocations, calls to `pumice::vk::Device::bind_buffer_memory()` or
+    /// `pumice::vk::Device::map_memory()` won't happen from multiple threads simultaneously
     /// (which is illegal in Vulkan).
     ///
     /// It is recommended to use function `Allocator::create_buffer` instead of this one.
     pub unsafe fn bind_buffer_memory(
         &self,
-        buffer: ash::vk::Buffer,
+        buffer: pumice::vk::Buffer,
         allocation: Allocation,
-    ) -> VkResult<()> {
+    ) -> VulkanResult<()> {
         ffi_to_result(ffi::vmaBindBufferMemory(self.internal, allocation, buffer))
     }
 
     /// Binds image to allocation.
     ///
     /// Binds specified image to region of memory represented by specified allocation.
-    /// Gets `ash::vk::DeviceMemory` handle and offset from the allocation.
+    /// Gets `pumice::vk::DeviceMemory` handle and offset from the allocation.
     ///
     /// If you want to create a image, allocate memory for it and bind them together separately,
-    /// you should use this function for binding instead of `ash::vk::Device::bind_image_memory`,
-    /// because it ensures proper synchronization so that when a `ash::vk::DeviceMemory` object is
-    /// used by multiple allocations, calls to `ash::vk::Device::bind_image_memory()` or
-    /// `ash::vk::Device::map_memory()` won't happen from multiple threads simultaneously
+    /// you should use this function for binding instead of `pumice::vk::Device::bind_image_memory`,
+    /// because it ensures proper synchronization so that when a `pumice::vk::DeviceMemory` object is
+    /// used by multiple allocations, calls to `pumice::vk::Device::bind_image_memory()` or
+    /// `pumice::vk::Device::map_memory()` won't happen from multiple threads simultaneously
     /// (which is illegal in Vulkan).
     ///
     /// It is recommended to use function `Allocator::create_image` instead of this one.
     pub unsafe fn bind_image_memory(
         &self,
-        image: ash::vk::Image,
+        image: pumice::vk::Image,
         allocation: Allocation,
-    ) -> VkResult<()> {
+    ) -> VulkanResult<()> {
         ffi_to_result(ffi::vmaBindImageMemory(self.internal, allocation, image))
     }
 
@@ -1019,7 +1137,7 @@ impl Allocator {
     ///
     /// If the function succeeded, you must destroy both buffer and allocation when you
     /// no longer need them using either convenience function `Allocator::destroy_buffer` or
-    /// separately, using `ash::Device::destroy_buffer` and `Allocator::free_memory`.
+    /// separately, using `pumice::Device::destroy_buffer` and `Allocator::free_memory`.
     ///
     /// If `AllocatorCreateFlags::KHR_DEDICATED_ALLOCATION` flag was used,
     /// VK_KHR_dedicated_allocation extension is used internally to query driver whether
@@ -1029,22 +1147,22 @@ impl Allocator {
     /// allocation for this buffer, just like when using `AllocationCreateFlags::DEDICATED_MEMORY`.
     pub unsafe fn create_buffer(
         &self,
-        buffer_info: &ash::vk::BufferCreateInfo,
+        buffer_info: &pumice::vk::BufferCreateInfo,
         allocation_create_info: &AllocationCreateInfo,
-    ) -> VkResult<(ash::vk::Buffer, Allocation, AllocationInfo)> {
+    ) -> VulkanResult<(pumice::vk::Buffer, Allocation, AllocationInfo)> {
         let mut buffer = vk::Buffer::null();
         let mut allocation: Allocation = mem::zeroed();
         let mut allocation_info: AllocationInfo = mem::zeroed();
-        ffi_to_result(ffi::vmaCreateBuffer(
+        try_ffi_to_result!(ffi::vmaCreateBuffer(
             self.internal,
             &*buffer_info,
             &allocation_create_info.inner,
             &mut buffer,
             &mut allocation,
             &mut allocation_info.internal,
-        ))?;
+        ));
 
-        Ok((buffer, allocation, allocation_info))
+        VulkanResult::new_ok((buffer, allocation, allocation_info))
     }
 
     /// Destroys Vulkan buffer and frees allocated memory.
@@ -1052,12 +1170,12 @@ impl Allocator {
     /// This is just a convenience function equivalent to:
     ///
     /// ```ignore
-    /// ash::vk::Device::destroy_buffer(buffer, None);
+    /// pumice::vk::Device::destroy_buffer(buffer, None);
     /// Allocator::free_memory(allocator, allocation);
     /// ```
     ///
     /// It it safe to pass null as `buffer` and/or `allocation`.
-    pub unsafe fn destroy_buffer(&self, buffer: ash::vk::Buffer, allocation: Allocation) {
+    pub unsafe fn destroy_buffer(&self, buffer: pumice::vk::Buffer, allocation: Allocation) {
         ffi::vmaDestroyBuffer(self.internal, buffer, allocation);
     }
 
@@ -1066,7 +1184,7 @@ impl Allocator {
     ///
     /// If the function succeeded, you must destroy both image and allocation when you
     /// no longer need them using either convenience function `Allocator::destroy_image` or
-    /// separately, using `ash::Device::destroy_image` and `Allocator::free_memory`.
+    /// separately, using `pumice::Device::destroy_image` and `Allocator::free_memory`.
     ///
     /// If `AllocatorCreateFlags::KHR_DEDICATED_ALLOCATION` flag was used,
     /// `VK_KHR_dedicated_allocation extension` is used internally to query driver whether
@@ -1080,22 +1198,22 @@ impl Allocator {
     /// image, a panic will occur and `VK_ERROR_VALIDAITON_FAILED_EXT` is thrown.
     pub unsafe fn create_image(
         &self,
-        image_info: &ash::vk::ImageCreateInfo,
+        image_info: &pumice::vk::ImageCreateInfo,
         allocation_create_info: &AllocationCreateInfo,
-    ) -> VkResult<(ash::vk::Image, Allocation, AllocationInfo)> {
+    ) -> VulkanResult<(pumice::vk::Image, Allocation, AllocationInfo)> {
         let mut image = vk::Image::null();
         let mut allocation: Allocation = mem::zeroed();
         let mut allocation_info: AllocationInfo = mem::zeroed();
-        ffi_to_result(ffi::vmaCreateImage(
+        try_ffi_to_result!(ffi::vmaCreateImage(
             self.internal,
             &*image_info,
             &allocation_create_info.inner,
             &mut image,
             &mut allocation,
             &mut allocation_info.internal,
-        ))?;
+        ));
 
-        Ok((image, allocation, allocation_info))
+        VulkanResult::new_ok((image, allocation, allocation_info))
     }
 
     /// Destroys Vulkan image and frees allocated memory.
@@ -1103,12 +1221,12 @@ impl Allocator {
     /// This is just a convenience function equivalent to:
     ///
     /// ```ignore
-    /// ash::vk::Device::destroy_image(image, None);
+    /// pumice::vk::Device::destroy_image(image, None);
     /// Allocator::free_memory(allocator, allocation);
     /// ```
     ///
     /// It it safe to pass null as `image` and/or `allocation`.
-    pub unsafe fn destroy_image(&self, image: ash::vk::Image, allocation: Allocation) {
+    pub unsafe fn destroy_image(&self, image: pumice::vk::Image, allocation: Allocation) {
         ffi::vmaDestroyImage(self.internal, image, allocation);
     }
 

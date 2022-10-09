@@ -1,16 +1,19 @@
-extern crate ash;
-extern crate vk_mem;
+extern crate pumice;
+extern crate pumice_vma;
 
-use ash::extensions::ext::DebugReport;
 use std::os::raw::{c_char, c_void};
 
-fn extension_names() -> Vec<*const i8> {
-    vec![DebugReport::name().as_ptr()]
-}
+use pumice::{
+    loader::{
+        tables::{DeviceTable, EntryTable, InstanceTable},
+        InstanceLoader,
+    },
+    DeviceWrapper,
+};
 
 unsafe extern "system" fn vulkan_debug_callback(
-    _: ash::vk::DebugReportFlagsEXT,
-    _: ash::vk::DebugReportObjectTypeEXT,
+    _: pumice::vk::DebugReportFlagsEXT,
+    _: pumice::vk::DebugReportObjectTypeEXT,
     _: u64,
     _: usize,
     _: i32,
@@ -19,16 +22,19 @@ unsafe extern "system" fn vulkan_debug_callback(
     _: *mut c_void,
 ) -> u32 {
     println!("{:?}", ::std::ffi::CStr::from_ptr(p_message));
-    ash::vk::FALSE
+    pumice::vk::FALSE
 }
 
 pub struct TestHarness {
-    pub entry: ash::Entry,
-    pub instance: ash::Instance,
-    pub device: ash::Device,
-    pub physical_device: ash::vk::PhysicalDevice,
-    pub debug_callback: ash::vk::DebugReportCallbackEXT,
-    pub debug_report_loader: ash::extensions::ext::DebugReport,
+    // if vulkan is loaded with libloading, the lifetime of the loaded library's memory is tied to this object so it must be preserved
+    pub loader: pumice::loader::EntryLoader,
+    // these tables store the function pointers to all the vulkan commands
+    pub tables: Box<(EntryTable, InstanceTable, DeviceTable)>,
+    pub entry: pumice::EntryWrapper,
+    pub instance: pumice::InstanceWrapper,
+    pub device: pumice::DeviceWrapper,
+    pub physical_device: pumice::vk::PhysicalDevice,
+    pub debug_callback: pumice::vk::DebugReportCallbackEXT,
 }
 
 impl Drop for TestHarness {
@@ -36,8 +42,8 @@ impl Drop for TestHarness {
         unsafe {
             self.device.device_wait_idle().unwrap();
             self.device.destroy_device(None);
-            self.debug_report_loader
-                .destroy_debug_report_callback(self.debug_callback, None);
+            self.instance
+                .destroy_debug_report_callback_ext(self.debug_callback, None);
             self.instance.destroy_instance(None);
         }
     }
@@ -45,52 +51,76 @@ impl Drop for TestHarness {
 impl TestHarness {
     pub fn new() -> Self {
         let app_name = ::std::ffi::CString::new("vk-mem testing").unwrap();
-        let app_info = ash::vk::ApplicationInfo::builder()
-            .application_name(&app_name)
-            .application_version(0)
-            .engine_name(&app_name)
-            .engine_version(0)
-            .api_version(ash::vk::make_version(1, 0, 0));
+        let api_version = pumice::vk::make_api_version(0, 1, 0, 0);
 
-        let layer_names = [::std::ffi::CString::new("VK_LAYER_KHRONOS_validation").unwrap()];
-        let layers_names_raw: Vec<*const i8> = layer_names
-            .iter()
-            .map(|raw_name| raw_name.as_ptr())
-            .collect();
+        let mut config = pumice::util::config::ApiLoadConfig::new(api_version);
+        config.add_extension(pumice::extensions::ext_debug_report::EXT_DEBUG_REPORT_EXTENSION_NAME);
 
-        let extension_names_raw = extension_names();
-        let create_info = ash::vk::InstanceCreateInfo::builder()
-            .application_info(&app_info)
-            .enabled_layer_names(&layers_names_raw)
-            .enabled_extension_names(&extension_names_raw);
+        let app_info = pumice::vk::ApplicationInfo {
+            p_application_name: app_name.as_ptr(),
+            application_version: 0,
+            p_engine_name: app_name.as_ptr(),
+            engine_version: 0,
+            api_version,
+            ..Default::default()
+        };
 
+        let layer_names = [pumice::cstr!("VK_LAYER_KHRONOS_validation").as_ptr()];
 
-        let entry = unsafe { ash::Entry::load().unwrap() };
-        let instance: ash::Instance = unsafe {
+        let extension_names_raw = config.get_instance_extensions();
+        let create_info = pumice::vk::InstanceCreateInfo {
+            p_application_info: &app_info,
+            pp_enabled_layer_names: layer_names.as_ptr(),
+            enabled_layer_count: layer_names.len() as _,
+            pp_enabled_extension_names: extension_names_raw.as_ptr(),
+            enabled_extension_count: extension_names_raw.len() as _,
+            ..Default::default()
+        };
+
+        let mut tables = Box::new((
+            EntryTable::new_empty(),
+            InstanceTable::new_empty(),
+            DeviceTable::new_empty(),
+        ));
+
+        let loader =
+            unsafe { pumice::loader::EntryLoader::new().expect("Failed to create entry loader") };
+
+        tables.0.load(&loader);
+
+        let entry = unsafe { pumice::EntryWrapper::new(&tables.0) };
+
+        let instance_handle = unsafe {
             entry
                 .create_instance(&create_info, None)
                 .expect("Instance creation error")
         };
 
-        let debug_info = ash::vk::DebugReportCallbackCreateInfoEXT::builder()
-            .flags(
-                ash::vk::DebugReportFlagsEXT::ERROR
-                    | ash::vk::DebugReportFlagsEXT::WARNING
-                    | ash::vk::DebugReportFlagsEXT::PERFORMANCE_WARNING,
-            )
-            .pfn_callback(Some(vulkan_debug_callback));
+        let instance_loader = unsafe { InstanceLoader::new(instance_handle, &loader) };
+        tables.1.load(&instance_loader, &config);
+        // loading device commands from the instance for greater flexibility, this may go through additional dispatch so is not as performant
+        tables.2.load(&instance_loader, &config);
 
-        let debug_report_loader = DebugReport::new(&entry, &instance);
+        let instance = unsafe { pumice::InstanceWrapper::new(instance_handle, &tables.1) };
+
+        let debug_info = pumice::vk::DebugReportCallbackCreateInfoEXT {
+            flags: pumice::vk::DebugReportFlagsEXT::ERROR
+                | pumice::vk::DebugReportFlagsEXT::WARNING
+                | pumice::vk::DebugReportFlagsEXT::PERFORMANCE_WARNING,
+            pfn_callback: Some(vulkan_debug_callback),
+            ..Default::default()
+        };
+
         let debug_callback = unsafe {
-            debug_report_loader
-                .create_debug_report_callback(&debug_info, None)
-                .unwrap()
+            instance
+                .create_debug_report_callback_ext(&debug_info, None)
+                .expect("Debug report callback creation error")
         };
 
         let physical_devices = unsafe {
             instance
-                .enumerate_physical_devices()
-                .expect("Physical device error")
+                .enumerate_physical_devices(None)
+                .expect("Physical device enumeration error")
         };
 
         let (physical_device, queue_family_index) = unsafe {
@@ -98,7 +128,7 @@ impl TestHarness {
                 .iter()
                 .map(|physical_device| {
                     instance
-                        .get_physical_device_queue_family_properties(*physical_device)
+                        .get_physical_device_queue_family_properties(*physical_device, None)
                         .iter()
                         .enumerate()
                         .filter_map(|(index, _)| Some((*physical_device, index)))
@@ -111,33 +141,45 @@ impl TestHarness {
 
         let priorities = [1.0];
 
-        let queue_info = [ash::vk::DeviceQueueCreateInfo::builder()
-            .queue_family_index(queue_family_index as u32)
-            .queue_priorities(&priorities)
-            .build()];
+        let queue_info = [pumice::vk::DeviceQueueCreateInfo {
+            queue_family_index: queue_family_index as _,
+            p_queue_priorities: priorities.as_ptr(),
+            queue_count: priorities.len() as _,
+            ..Default::default()
+        }];
 
-        let device_create_info =
-            ash::vk::DeviceCreateInfo::builder().queue_create_infos(&queue_info);
+        let device_create_info = pumice::vk::DeviceCreateInfo {
+            p_queue_create_infos: queue_info.as_ptr(),
+            queue_create_info_count: queue_info.len() as _,
+            ..Default::default()
+        };
 
-        let device: ash::Device = unsafe {
+        let device_handle = unsafe {
             instance
                 .create_device(physical_device, &device_create_info, None)
                 .unwrap()
         };
 
+        let device = unsafe { DeviceWrapper::new(device_handle, &tables.2) };
+
         TestHarness {
+            loader,
+            tables,
             entry,
             instance,
             device,
             physical_device,
-            debug_report_loader,
             debug_callback,
         }
     }
 
-    pub fn create_allocator(&self) -> vk_mem::Allocator {
-        let create_info = vk_mem::AllocatorCreateInfo::new(&self.instance, &self.device, &self.physical_device);
-        vk_mem::Allocator::new(create_info).unwrap()
+    pub fn create_allocator(&self) -> pumice_vma::Allocator {
+        let create_info = pumice_vma::AllocatorCreateInfo::new(
+            &self.instance,
+            &self.device,
+            &self.physical_device,
+        );
+        pumice_vma::Allocator::new(create_info).unwrap()
     }
 }
 
@@ -156,18 +198,18 @@ fn create_allocator() {
 fn create_gpu_buffer() {
     let harness = TestHarness::new();
     let allocator = harness.create_allocator();
-    let allocation_info =  vk_mem::AllocationCreateInfo::new().usage(vk_mem::MemoryUsage::GpuOnly);
+    let allocation_info =
+        pumice_vma::AllocationCreateInfo::new().usage(pumice_vma::MemoryUsage::GpuOnly);
 
     unsafe {
         let (buffer, allocation, allocation_info) = allocator
             .create_buffer(
-                &ash::vk::BufferCreateInfo::builder()
-                    .size(16 * 1024)
-                    .usage(
-                        ash::vk::BufferUsageFlags::VERTEX_BUFFER
-                            | ash::vk::BufferUsageFlags::TRANSFER_DST,
-                    )
-                    .build(),
+                &pumice::vk::BufferCreateInfo {
+                    size: 16 * 1024,
+                    usage: pumice::vk::BufferUsageFlags::VERTEX_BUFFER
+                        | pumice::vk::BufferUsageFlags::TRANSFER_DST,
+                    ..Default::default()
+                },
                 &allocation_info,
             )
             .unwrap();
@@ -180,21 +222,22 @@ fn create_gpu_buffer() {
 fn create_cpu_buffer_preferred() {
     let harness = TestHarness::new();
     let allocator = harness.create_allocator();
-    let allocation_info =  vk_mem::AllocationCreateInfo::new()
-        .required_flags(ash::vk::MemoryPropertyFlags::HOST_VISIBLE)
-        .preferred_flags(ash::vk::MemoryPropertyFlags::HOST_COHERENT
-            | ash::vk::MemoryPropertyFlags::HOST_CACHED)
-        .flags(vk_mem::AllocationCreateFlags::MAPPED);
+    let allocation_info = pumice_vma::AllocationCreateInfo::new()
+        .required_flags(pumice::vk::MemoryPropertyFlags::HOST_VISIBLE)
+        .preferred_flags(
+            pumice::vk::MemoryPropertyFlags::HOST_COHERENT
+                | pumice::vk::MemoryPropertyFlags::HOST_CACHED,
+        )
+        .flags(pumice_vma::AllocationCreateFlags::MAPPED);
     unsafe {
         let (buffer, allocation, allocation_info) = allocator
             .create_buffer(
-                &ash::vk::BufferCreateInfo::builder()
-                    .size(16 * 1024)
-                    .usage(
-                        ash::vk::BufferUsageFlags::VERTEX_BUFFER
-                            | ash::vk::BufferUsageFlags::TRANSFER_DST,
-                    )
-                    .build(),
+                &pumice::vk::BufferCreateInfo {
+                    size: 16 * 1024,
+                    usage: pumice::vk::BufferUsageFlags::VERTEX_BUFFER
+                        | pumice::vk::BufferUsageFlags::TRANSFER_DST,
+                    ..Default::default()
+                },
                 &allocation_info,
             )
             .unwrap();
@@ -208,23 +251,27 @@ fn create_gpu_buffer_pool() {
     let harness = TestHarness::new();
     let allocator = harness.create_allocator();
 
-    let buffer_info = ash::vk::BufferCreateInfo::builder()
-        .size(16 * 1024)
-        .usage(ash::vk::BufferUsageFlags::UNIFORM_BUFFER | ash::vk::BufferUsageFlags::TRANSFER_DST)
-        .build();
+    let buffer_info = pumice::vk::BufferCreateInfo {
+        size: 16 * 1024,
+        usage: pumice::vk::BufferUsageFlags::UNIFORM_BUFFER
+            | pumice::vk::BufferUsageFlags::TRANSFER_DST,
+        ..Default::default()
+    };
 
-    let mut allocation_info = vk_mem::AllocationCreateInfo::new()
-        .required_flags(ash::vk::MemoryPropertyFlags::HOST_VISIBLE)
-        .preferred_flags(ash::vk::MemoryPropertyFlags::HOST_COHERENT
-            | ash::vk::MemoryPropertyFlags::HOST_CACHED)
-        .flags(vk_mem::AllocationCreateFlags::MAPPED);
+    let mut allocation_info = pumice_vma::AllocationCreateInfo::new()
+        .required_flags(pumice::vk::MemoryPropertyFlags::HOST_VISIBLE)
+        .preferred_flags(
+            pumice::vk::MemoryPropertyFlags::HOST_COHERENT
+                | pumice::vk::MemoryPropertyFlags::HOST_CACHED,
+        )
+        .flags(pumice_vma::AllocationCreateFlags::MAPPED);
     unsafe {
         let memory_type_index = allocator
             .find_memory_type_index_for_buffer_info(&buffer_info, &allocation_info)
             .unwrap();
 
         // Create a pool that can have at most 2 blocks, 128 MiB each.
-        let pool_info = vk_mem::PoolCreateInfo::new()
+        let pool_info = pumice_vma::PoolCreateInfo::new()
             .memory_type_index(memory_type_index)
             .block_size(128 * 1024 * 1024)
             .max_block_count(2);
@@ -245,8 +292,8 @@ fn create_gpu_buffer_pool() {
 fn test_gpu_stats() {
     let harness = TestHarness::new();
     let allocator = harness.create_allocator();
-    let allocation_info = vk_mem::AllocationCreateInfo::new()
-        .usage(vk_mem::MemoryUsage::GpuOnly);
+    let allocation_info =
+        pumice_vma::AllocationCreateInfo::new().usage(pumice_vma::MemoryUsage::GpuOnly);
 
     unsafe {
         let stats_1 = allocator.calculate_stats().unwrap();
@@ -256,13 +303,12 @@ fn test_gpu_stats() {
 
         let (buffer, allocation, _allocation_info) = allocator
             .create_buffer(
-                &ash::vk::BufferCreateInfo::builder()
-                    .size(16 * 1024)
-                    .usage(
-                        ash::vk::BufferUsageFlags::VERTEX_BUFFER
-                            | ash::vk::BufferUsageFlags::TRANSFER_DST,
-                    )
-                    .build(),
+                &pumice::vk::BufferCreateInfo {
+                    size: 16 * 1024,
+                    usage: pumice::vk::BufferUsageFlags::VERTEX_BUFFER
+                        | pumice::vk::BufferUsageFlags::TRANSFER_DST,
+                    ..Default::default()
+                },
                 &allocation_info,
             )
             .unwrap();
@@ -286,8 +332,8 @@ fn test_stats_string() {
     let harness = TestHarness::new();
     let allocator = harness.create_allocator();
 
-    let allocation_info = vk_mem::AllocationCreateInfo::new()
-        .usage(vk_mem::MemoryUsage::GpuOnly);
+    let allocation_info =
+        pumice_vma::AllocationCreateInfo::new().usage(pumice_vma::MemoryUsage::GpuOnly);
 
     unsafe {
         let stats_1 = allocator.build_stats_string(true).unwrap();
@@ -295,13 +341,12 @@ fn test_stats_string() {
 
         let (buffer, allocation, _allocation_info) = allocator
             .create_buffer(
-                &ash::vk::BufferCreateInfo::builder()
-                    .size(16 * 1024)
-                    .usage(
-                        ash::vk::BufferUsageFlags::VERTEX_BUFFER
-                            | ash::vk::BufferUsageFlags::TRANSFER_DST,
-                    )
-                    .build(),
+                &pumice::vk::BufferCreateInfo {
+                    size: 16 * 1024,
+                    usage: pumice::vk::BufferUsageFlags::VERTEX_BUFFER
+                        | pumice::vk::BufferUsageFlags::TRANSFER_DST,
+                    ..Default::default()
+                },
                 &allocation_info,
             )
             .unwrap();

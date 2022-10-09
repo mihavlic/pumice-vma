@@ -15,14 +15,14 @@ fn main() {
     #[cfg(not(debug_assertions))]
     build.define("NDEBUG", "");
 
-    // We want to use the loader in ash, instead of requiring us to link
-    // in vulkan.dll/.dylib in addition to ash. This is especially important
+    // We want to use the loader in pumice, instead of requiring us to link
+    // in vulkan.dll/.dylib in addition to pumice. This is especially important
     // for MoltenVK, where there is no default installation path, unlike
     // Linux (pkconfig) and Windows (VULKAN_SDK environment variable).
     build.define("VMA_STATIC_VULKAN_FUNCTIONS", "0");
 
     // This prevents VMA from trying to fetch any remaining pointers
-    // that are still null after using the loader in ash, which can
+    // that are still null after using the loader in pumice, which can
     // cause linker errors.
     build.define("VMA_DYNAMIC_VULKAN_FUNCTIONS", "0");
 
@@ -163,10 +163,11 @@ fn generate_bindings(output_file: &str) {
         .allowlist_function("vma.*")
         .allowlist_function("PFN_vma.*")
         .allowlist_type("Vma.*")
-        .parse_callbacks(Box::new(FixAshTypes))
+        .parse_callbacks(Box::new(FixPumiceTypes))
         .blocklist_type("Vk.*")
         .blocklist_type("PFN_vk.*")
-        .raw_line("use ash::vk::*;")
+        .raw_line("use pumice::vk::*;")
+        .raw_line(PFN_DEFINITIONS)
         .trust_clang_mangling(false)
         .layout_tests(false)
         .generate()
@@ -182,24 +183,15 @@ fn generate_bindings(_: &str) {}
 
 #[cfg(feature = "generate_bindings")]
 #[derive(Debug)]
-struct FixAshTypes;
+struct FixPumiceTypes;
 
 #[cfg(feature = "generate_bindings")]
-impl bindgen::callbacks::ParseCallbacks for FixAshTypes {
+impl bindgen::callbacks::ParseCallbacks for FixPumiceTypes {
     fn item_name(&self, original_item_name: &str) -> Option<String> {
-        if original_item_name.starts_with("Vk") {
-            // Strip `Vk` prefix, will use `ash::vk::*` instead
-            Some(original_item_name.trim_start_matches("Vk").to_string())
-        } else if original_item_name.starts_with("PFN_vk") && original_item_name.ends_with("KHR") {
-            // VMA uses a few extensions like `PFN_vkGetBufferMemoryRequirements2KHR`,
-            // ash keeps these as `PFN_vkGetBufferMemoryRequirements2`
-            Some(original_item_name.trim_end_matches("KHR").to_string())
-        } else {
-            None
-        }
+        original_item_name.strip_prefix("Vk").map(ToOwned::to_owned)
     }
 
-    // When ignoring `Vk` types, bindgen loses derives for some type. Quick workaround.
+    // When ignoring `Vk` types, bindgen loses derives for some types. Quick workaround.
     fn add_derives(&self, name: &str) -> Vec<String> {
         if name.starts_with("VmaAllocationInfo") || name.starts_with("VmaDefragmentationStats") {
             vec!["Debug".into(), "Copy".into(), "Clone".into()]
@@ -208,3 +200,152 @@ impl bindgen::callbacks::ParseCallbacks for FixAshTypes {
         }
     }
 }
+
+// at this time pumice does not generate type aliases for all function's function pointers so this must be done manually
+#[cfg(feature = "generate_bindings")]
+const PFN_DEFINITIONS: &str = r#"
+pub type PFN_vkGetInstanceProcAddr = unsafe extern "system" fn(
+    instance: pumice::vk10::Instance,
+    p_name: *const std::os::raw::c_char,
+) -> pumice::vk10::PfnVoidFunction;
+
+pub type PFN_vkGetDeviceProcAddr = unsafe extern "system" fn(
+    device: pumice::vk10::Device,
+    p_name: *const std::os::raw::c_char,
+) -> pumice::vk10::PfnVoidFunction;
+
+pub type PFN_vkGetPhysicalDeviceProperties = unsafe extern "system" fn(
+    physical_device: pumice::vk10::PhysicalDevice,
+    p_properties: *mut pumice::vk10::PhysicalDeviceProperties,
+);
+
+pub type PFN_vkGetPhysicalDeviceMemoryProperties = unsafe extern "system" fn(
+    physical_device: pumice::vk10::PhysicalDevice,
+    p_memory_properties: *mut pumice::vk10::PhysicalDeviceMemoryProperties,
+);
+
+pub type PFN_vkAllocateMemory = unsafe extern "system" fn(
+    device: pumice::vk10::Device,
+    p_allocate_info: *const pumice::vk10::MemoryAllocateInfo,
+    p_allocator: *const pumice::vk10::AllocationCallbacks,
+    p_memory: *mut pumice::vk10::DeviceMemory,
+) -> pumice::vk10::Result;
+
+pub type PFN_vkFreeMemory = unsafe extern "system" fn(
+    device: pumice::vk10::Device,
+    memory: pumice::vk10::DeviceMemory,
+    p_allocator: *const pumice::vk10::AllocationCallbacks,
+);
+
+pub type PFN_vkMapMemory = unsafe extern "system" fn(
+    device: pumice::vk10::Device,
+    memory: pumice::vk10::DeviceMemory,
+    offset: pumice::vk10::DeviceSize,
+    size: pumice::vk10::DeviceSize,
+    flags: pumice::vk10::MemoryMapFlags,
+    pp_data: *mut *mut std::os::raw::c_void,
+) -> pumice::vk10::Result;
+
+pub type PFN_vkUnmapMemory =
+    unsafe extern "system" fn(device: pumice::vk10::Device, memory: pumice::vk10::DeviceMemory);
+
+pub type PFN_vkFlushMappedMemoryRanges = unsafe extern "system" fn(
+    device: pumice::vk10::Device,
+    memory_range_count: u32,
+    p_memory_ranges: *const pumice::vk10::MappedMemoryRange,
+) -> pumice::vk10::Result;
+
+pub type PFN_vkInvalidateMappedMemoryRanges = unsafe extern "system" fn(
+    device: pumice::vk10::Device,
+    memory_range_count: u32,
+    p_memory_ranges: *const pumice::vk10::MappedMemoryRange,
+) -> pumice::vk10::Result;
+
+pub type PFN_vkBindBufferMemory = unsafe extern "system" fn(
+    device: pumice::vk10::Device,
+    buffer: pumice::vk10::Buffer,
+    memory: pumice::vk10::DeviceMemory,
+    memory_offset: pumice::vk10::DeviceSize,
+) -> pumice::vk10::Result;
+
+pub type PFN_vkBindImageMemory = unsafe extern "system" fn(
+    device: pumice::vk10::Device,
+    image: pumice::vk10::Image,
+    memory: pumice::vk10::DeviceMemory,
+    memory_offset: pumice::vk10::DeviceSize,
+) -> pumice::vk10::Result;
+
+pub type PFN_vkGetBufferMemoryRequirements = unsafe extern "system" fn(
+    device: pumice::vk10::Device,
+    buffer: pumice::vk10::Buffer,
+    p_memory_requirements: *mut pumice::vk10::MemoryRequirements,
+);
+
+pub type PFN_vkGetImageMemoryRequirements = unsafe extern "system" fn(
+    device: pumice::vk10::Device,
+    image: pumice::vk10::Image,
+    p_memory_requirements: *mut pumice::vk10::MemoryRequirements,
+);
+
+pub type PFN_vkCreateBuffer = unsafe extern "system" fn(
+    device: pumice::vk10::Device,
+    p_create_info: *const pumice::vk10::BufferCreateInfo,
+    p_allocator: *const pumice::vk10::AllocationCallbacks,
+    p_buffer: *mut pumice::vk10::Buffer,
+) -> pumice::vk10::Result;
+
+pub type PFN_vkDestroyBuffer = unsafe extern "system" fn(
+    device: pumice::vk10::Device,
+    buffer: pumice::vk10::Buffer,
+    p_allocator: *const pumice::vk10::AllocationCallbacks,
+);
+
+pub type PFN_vkCreateImage = unsafe extern "system" fn(
+        device: pumice::vk10::Device,
+        p_create_info: *const pumice::vk10::ImageCreateInfo,
+        p_allocator: *const pumice::vk10::AllocationCallbacks,
+        p_image: *mut pumice::vk10::Image,
+) -> pumice::vk10::Result;
+
+pub type PFN_vkDestroyImage = unsafe extern "system" fn(
+    device: pumice::vk10::Device,
+    image: pumice::vk10::Image,
+    p_allocator: *const pumice::vk10::AllocationCallbacks,
+);
+
+pub type PFN_vkCmdCopyBuffer = unsafe extern "system" fn(
+    command_buffer: pumice::vk10::CommandBuffer,
+    src_buffer: pumice::vk10::Buffer,
+    dst_buffer: pumice::vk10::Buffer,
+    region_count: u32,
+    p_regions: *const pumice::vk10::BufferCopy,
+);
+
+pub type PFN_vkGetBufferMemoryRequirements2KHR = unsafe extern "system" fn(
+    device: pumice::vk10::Device,
+    p_info: *const pumice::vk11::BufferMemoryRequirementsInfo2,
+    p_memory_requirements: *mut pumice::vk11::MemoryRequirements2,
+);
+
+pub type PFN_vkGetImageMemoryRequirements2KHR = unsafe extern "system" fn(
+    device: pumice::vk10::Device,
+    p_info: *const pumice::vk11::ImageMemoryRequirementsInfo2,
+    p_memory_requirements: *mut pumice::vk11::MemoryRequirements2,
+);
+
+pub type PFN_vkBindBufferMemory2KHR = unsafe extern "system" fn(
+    device: pumice::vk10::Device,
+    bind_info_count: u32,
+    p_bind_infos: *const pumice::vk11::BindBufferMemoryInfo,
+) -> pumice::vk10::Result;
+
+pub type PFN_vkBindImageMemory2KHR = unsafe extern "system" fn(
+    device: pumice::vk10::Device,
+    bind_info_count: u32,
+    p_bind_infos: *const pumice::vk11::BindImageMemoryInfo,
+) -> pumice::vk10::Result;
+
+pub type PFN_vkGetPhysicalDeviceMemoryProperties2KHR = unsafe extern "system" fn(
+    physical_device: pumice::vk10::PhysicalDevice,
+    p_memory_properties: *mut pumice::vk11::PhysicalDeviceMemoryProperties2,
+);"#;

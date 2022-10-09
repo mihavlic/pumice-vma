@@ -1,9 +1,9 @@
-extern crate ash;
-extern crate vk_mem;
+extern crate pumice;
+extern crate pumice_vma;
 
 /*
-use ash::extensions::DebugReport;
-use ash::version::{DeviceV1_0, EntryV1_0, InstanceV1_0};
+use pumice::extensions::DebugReport;
+use pumice::version::{DeviceV1_0, EntryV1_0, InstanceV1_0};
 use std::os::raw::{c_char, c_void};
 
 fn extension_names() -> Vec<*const i8> {
@@ -11,8 +11,8 @@ fn extension_names() -> Vec<*const i8> {
 }
 
 unsafe extern "system" fn vulkan_debug_callback(
-    _: ash::vk::DebugReportFlagsEXT,
-    _: ash::vk::DebugReportObjectTypeEXT,
+    _: pumice::vk::DebugReportFlagsEXT,
+    _: pumice::vk::DebugReportObjectTypeEXT,
     _: u64,
     _: usize,
     _: i32,
@@ -21,12 +21,12 @@ unsafe extern "system" fn vulkan_debug_callback(
     _: *mut c_void,
 ) -> u32 {
     println!("{:?}", ::std::ffi::CStr::from_ptr(p_message));
-    ash::vk::FALSE
+    pumice::vk::FALSE
 }
 
-fn verify_result(result: ash::vk::Result) {
+fn verify_result(result: pumice::vk::Result) {
     match result {
-        ash::vk::Result::SUCCESS => {
+        pumice::vk::Result::SUCCESS => {
             // Success
         }
         _ => {

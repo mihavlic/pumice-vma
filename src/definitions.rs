@@ -1,8 +1,8 @@
 use crate::ffi::VmaAllocationCreateInfo;
 use crate::{ffi, AllocatorPool};
-use ash::vk::PhysicalDevice;
-use ash::{Device, Instance};
 use bitflags::bitflags;
+use pumice::vk::PhysicalDevice;
+use pumice::{DeviceWrapper, InstanceWrapper};
 use std::ptr;
 
 /// Intended usage of memory.
@@ -24,14 +24,14 @@ pub enum MemoryUsage {
     ///   device multiple times, e.g. textures to be sampled, vertex buffers, uniform
     ///   (constant) buffers, and majority of other types of resources used on GPU.
     ///
-    /// Allocation may still end up in `ash::vk::MemoryPropertyFlags::HOST_VISIBLE` memory on some implementations.
+    /// Allocation may still end up in `pumice::vk::MemoryPropertyFlags::HOST_VISIBLE` memory on some implementations.
     /// In such case, you are free to map it.
     /// You can use `AllocationCreateFlags::MAPPED` with this usage type.
     GpuOnly,
 
     /// Memory will be mappable on host.
     /// It usually means CPU (system) memory.
-    /// Guarantees to be `ash::vk::MemoryPropertyFlags::HOST_VISIBLE` and `ash::vk::MemoryPropertyFlags::HOST_COHERENT`.
+    /// Guarantees to be `pumice::vk::MemoryPropertyFlags::HOST_VISIBLE` and `pumice::vk::MemoryPropertyFlags::HOST_COHERENT`.
     /// CPU access is typically uncached. Writes may be write-combined.
     /// Resources created in this pool may still be accessible to the device, but access to them can be slow.
     /// It is roughly equivalent of `D3D12_HEAP_TYPE_UPLOAD`.
@@ -39,14 +39,14 @@ pub enum MemoryUsage {
     /// Usage: Staging copy of resources used as transfer source.
     CpuOnly,
 
-    /// Memory that is both mappable on host (guarantees to be `ash::vk::MemoryPropertyFlags::HOST_VISIBLE`) and preferably fast to access by GPU.
+    /// Memory that is both mappable on host (guarantees to be `pumice::vk::MemoryPropertyFlags::HOST_VISIBLE`) and preferably fast to access by GPU.
     /// CPU access is typically uncached. Writes may be write-combined.
     ///
     /// Usage: Resources written frequently by host (dynamic), read by device. E.g. textures, vertex buffers,
     /// uniform buffers updated every frame or every draw call.
     CpuToGpu,
 
-    /// Memory mappable on host (guarantees to be `ash::vk::MemoryPropertFlags::HOST_VISIBLE`) and cached.
+    /// Memory mappable on host (guarantees to be `pumice::vk::MemoryPropertFlags::HOST_VISIBLE`) and cached.
     /// It is roughly equivalent of `D3D12_HEAP_TYPE_READBACK`.
     ///
     /// Usage:
@@ -55,7 +55,7 @@ pub enum MemoryUsage {
     /// - Any resources read or accessed randomly on host, e.g. CPU-side copy of vertex buffer used as source of transfer, but also used for collision detection.
     GpuToCpu,
 
-    /// Lazily allocated GPU memory having (guarantees to be `ash::vk::MemoryPropertFlags::LAZILY_ALLOCATED`).
+    /// Lazily allocated GPU memory having (guarantees to be `pumice::vk::MemoryPropertFlags::LAZILY_ALLOCATED`).
     /// Exists mostly on mobile platforms. Using it on desktop PC or other GPUs with no such memory type present will fail the allocation.
     ///
     /// Usage:
@@ -184,10 +184,10 @@ bitflags! {
         /// You should not use this flag if `AllocationCreateInfo::pool` is not `None`.
         const DEDICATED_MEMORY = 0x0000_0001;
 
-        /// Set this flag to only try to allocate from existing `ash::vk::DeviceMemory` blocks and never create new such block.
+        /// Set this flag to only try to allocate from existing `pumice::vk::DeviceMemory` blocks and never create new such block.
         ///
         /// If new allocation cannot be placed in any of the existing blocks, allocation
-        /// fails with `ash::vk::Result::ERROR_OUT_OF_DEVICE_MEMORY` error.
+        /// fails with `pumice::vk::Result::ERROR_OUT_OF_DEVICE_MEMORY` error.
         ///
         /// You should not use `AllocationCreateFlags::DEDICATED_MEMORY` and `AllocationCreateFlags::NEVER_ALLOCATE` at the same time. It makes no sense.
         ///
@@ -199,9 +199,9 @@ bitflags! {
         /// Pointer to mapped memory will be returned through `Allocation::get_mapped_data()`.
         ///
         /// Is it valid to use this flag for allocation made from memory type that is not
-        /// `ash::vk::MemoryPropertyFlags::HOST_VISIBLE`. This flag is then ignored and memory is not mapped. This is
+        /// `pumice::vk::MemoryPropertyFlags::HOST_VISIBLE`. This flag is then ignored and memory is not mapped. This is
         /// useful if you need an allocation that is efficient to use on GPU
-        /// (`ash::vk::MemoryPropertyFlags::DEVICE_LOCAL`) and still want to map it directly if possible on platforms that
+        /// (`pumice::vk::MemoryPropertyFlags::DEVICE_LOCAL`) and still want to map it directly if possible on platforms that
         /// support it (e.g. Intel GPU).
         ///
         /// You should not use this flag together with `AllocationCreateFlags::CAN_BECOME_LOST`.
@@ -330,16 +330,16 @@ bitflags! {
 pub struct AllocatorCreateInfo<'a> {
     pub(crate) inner: ffi::VmaAllocatorCreateInfo,
     pub(crate) physical_device: &'a PhysicalDevice,
-    pub(crate) device: &'a Device,
-    pub(crate) instance: &'a Instance,
+    pub(crate) device: &'a DeviceWrapper,
+    pub(crate) instance: &'a InstanceWrapper,
     pub(crate) marker: ::std::marker::PhantomData<&'a ()>,
 }
 
 impl<'a> AllocatorCreateInfo<'a> {
     pub fn new(
-        instance: &'a ash::Instance,
-        device: &'a ash::Device,
-        physical_device: &'a ash::vk::PhysicalDevice,
+        instance: &'a pumice::InstanceWrapper,
+        device: &'a pumice::DeviceWrapper,
+        physical_device: &'a pumice::vk::PhysicalDevice,
     ) -> AllocatorCreateInfo<'a> {
         AllocatorCreateInfo {
             inner: ffi::VmaAllocatorCreateInfo {
@@ -372,7 +372,7 @@ impl<'a> AllocatorCreateInfo<'a> {
         self
     }
 
-    pub fn heap_size_limit(mut self, device_sizes: &'a [ash::vk::DeviceSize]) -> Self {
+    pub fn heap_size_limit(mut self, device_sizes: &'a [pumice::vk::DeviceSize]) -> Self {
         unsafe {
             debug_assert!(
                 self.instance
@@ -385,7 +385,7 @@ impl<'a> AllocatorCreateInfo<'a> {
         self
     }
 
-    pub fn allocation_callback(mut self, allocation: &'a ash::vk::AllocationCallbacks) -> Self {
+    pub fn allocation_callback(mut self, allocation: &'a pumice::vk::AllocationCallbacks) -> Self {
         self.inner.pAllocationCallbacks = allocation as *const _;
         self
     }
@@ -397,7 +397,7 @@ impl<'a> AllocatorCreateInfo<'a> {
 
     pub fn external_memory_handles(
         mut self,
-        external_memory_handles: &'a [ash::vk::ExternalMemoryHandleTypeFlagsKHR],
+        external_memory_handles: &'a [pumice::vk::ExternalMemoryHandleTypeFlagsKHR],
     ) -> Self {
         unsafe {
             debug_assert!(
@@ -469,8 +469,8 @@ impl<'a> PoolCreateInfo<'a> {
         self
     }
 
-    pub fn memory_allocate(mut self, next: &'a mut ash::vk::MemoryAllocateInfo) -> Self {
-        self.inner.pMemoryAllocateNext = next as *mut ash::vk::MemoryAllocateInfo as *mut _;
+    pub fn memory_allocate(mut self, next: &'a mut pumice::vk::MemoryAllocateInfo) -> Self {
+        self.inner.pMemoryAllocateNext = next as *mut pumice::vk::MemoryAllocateInfo as *mut _;
         self
     }
 }
@@ -514,12 +514,12 @@ impl<'a> AllocationCreateInfo<'a> {
         self
     }
 
-    pub fn required_flags(mut self, flags: ash::vk::MemoryPropertyFlags) -> Self {
+    pub fn required_flags(mut self, flags: pumice::vk::MemoryPropertyFlags) -> Self {
         self.inner.requiredFlags = flags;
         self
     }
 
-    pub fn preferred_flags(mut self, flags: ash::vk::MemoryPropertyFlags) -> Self {
+    pub fn preferred_flags(mut self, flags: pumice::vk::MemoryPropertyFlags) -> Self {
         self.inner.preferredFlags = flags;
         self
     }
