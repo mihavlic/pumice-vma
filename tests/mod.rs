@@ -1,8 +1,6 @@
 extern crate pumice;
 extern crate pumice_vma;
 
-use std::os::raw::{c_char, c_void};
-
 use pumice::{
     loader::{
         tables::{DeviceTable, EntryTable, InstanceTable},
@@ -11,14 +9,15 @@ use pumice::{
     DeviceWrapper,
 };
 
+#[cfg(feature = "tests_debug_callback")]
 unsafe extern "system" fn vulkan_debug_callback(
     _: pumice::vk::DebugReportFlagsEXT,
     _: pumice::vk::DebugReportObjectTypeEXT,
     _: u64,
     _: usize,
     _: i32,
-    _: *const c_char,
-    p_message: *const c_char,
+    _: *const std::os::raw::c_char,
+    p_message: *const std::os::raw::c_char,
     _: *mut c_void,
 ) -> u32 {
     println!("{:?}", ::std::ffi::CStr::from_ptr(p_message));
@@ -34,6 +33,7 @@ pub struct TestHarness {
     pub instance: pumice::InstanceWrapper,
     pub device: pumice::DeviceWrapper,
     pub physical_device: pumice::vk::PhysicalDevice,
+    #[cfg(feature = "tests_debug_callback")]
     pub debug_callback: pumice::vk::DebugReportCallbackEXT,
 }
 
@@ -42,6 +42,7 @@ impl Drop for TestHarness {
         unsafe {
             self.device.device_wait_idle().unwrap();
             self.device.destroy_device(None);
+            #[cfg(feature = "tests_debug_callback")]
             self.instance
                 .destroy_debug_report_callback_ext(self.debug_callback, None);
             self.instance.destroy_instance(None);
@@ -53,7 +54,9 @@ impl TestHarness {
         let app_name = ::std::ffi::CString::new("vk-mem testing").unwrap();
         let api_version = pumice::vk::make_api_version(0, 1, 0, 0);
 
+        #[allow(unused_mut)]
         let mut config = pumice::util::config::ApiLoadConfig::new(api_version);
+        #[cfg(feature = "tests_debug_callback")]
         config.add_extension(pumice::extensions::ext_debug_report::EXT_DEBUG_REPORT_EXTENSION_NAME);
 
         let app_info = pumice::vk::ApplicationInfo {
@@ -103,15 +106,15 @@ impl TestHarness {
 
         let instance = unsafe { pumice::InstanceWrapper::new(instance_handle, &tables.1) };
 
-        let debug_info = pumice::vk::DebugReportCallbackCreateInfoEXT {
-            flags: pumice::vk::DebugReportFlagsEXT::ERROR
-                | pumice::vk::DebugReportFlagsEXT::WARNING
-                | pumice::vk::DebugReportFlagsEXT::PERFORMANCE_WARNING,
-            pfn_callback: Some(vulkan_debug_callback),
-            ..Default::default()
-        };
-
+        #[cfg(feature = "tests_debug_callback")]
         let debug_callback = unsafe {
+            let debug_info = pumice::vk::DebugReportCallbackCreateInfoEXT {
+                flags: pumice::vk::DebugReportFlagsEXT::ERROR
+                    | pumice::vk::DebugReportFlagsEXT::WARNING
+                    | pumice::vk::DebugReportFlagsEXT::PERFORMANCE_WARNING,
+                pfn_callback: Some(vulkan_debug_callback),
+                ..Default::default()
+            };
             instance
                 .create_debug_report_callback_ext(&debug_info, None)
                 .expect("Debug report callback creation error")
@@ -169,6 +172,7 @@ impl TestHarness {
             instance,
             device,
             physical_device,
+            #[cfg(feature = "tests_debug_callback")]
             debug_callback,
         }
     }

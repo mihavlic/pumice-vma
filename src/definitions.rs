@@ -397,7 +397,7 @@ impl<'a> AllocatorCreateInfo<'a> {
 
     pub fn external_memory_handles(
         mut self,
-        external_memory_handles: &'a [pumice::vk::ExternalMemoryHandleTypeFlagsKHR],
+        external_memory_handles: &'a [pumice::vk::ExternalMemoryHandleTypeFlags],
     ) -> Self {
         unsafe {
             debug_assert!(

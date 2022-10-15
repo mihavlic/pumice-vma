@@ -250,180 +250,38 @@ pub struct DefragmentationStats {
 impl Allocator {
     /// Constructor a new `Allocator` using the provided options.
     pub fn new(mut create_info: AllocatorCreateInfo) -> VulkanResult<Self> {
-        unsafe extern "system" fn get_instance_proc_addr_stub(
-            _instance: pumice::vk::Instance,
-            _p_name: *const ::std::os::raw::c_char,
-        ) -> pumice::vk::PfnVoidFunction {
-            panic!("VMA_DYNAMIC_VULKAN_FUNCTIONS is unsupported")
-        }
-
-        unsafe extern "system" fn get_get_device_proc_stub(
-            _device: pumice::vk::Device,
-            _p_name: *const ::std::os::raw::c_char,
-        ) -> pumice::vk::PfnVoidFunction {
-            panic!("VMA_DYNAMIC_VULKAN_FUNCTIONS is unsupported")
-        }
-
         let instance = unsafe { &(*create_info.instance.table()) };
         let device = unsafe { &(*create_info.device.table()) };
 
-        // Since we do not initialize function pointers with stub functions and wrap them in Option instead
-        // we must generate the stubs here ourselves, this macro is creating these stubs and then initializing
-        // VmaVulkanFunctions with the provided function pointer or a stub if null.
-        // ATTENTION
-        // The function signatures are the same as the string at the bottom of build.rs, keep them exactly the same for easy pasting!
-        macro_rules! load_functions {
-            (
-                $load_to:ident =
-                $(
-                    $name_orig:ident, $src:ident: unsafe extern "system" fn $name:ident (
-                        $(
-                            $arg:ident: $typ:ty,
-                        )+
-                    ) $(-> $ret:ty)?
-                ),+
-            ) => {
-                $(
-                    unsafe extern "system" fn $name (
-                        $(
-                            _: $typ
-                        ),+
-                    ) $(-> $ret)? {
-                        panic!(concat!(stringify!($name_orig), " was passed as null to VMA and was now called."))
-                    }
-                )+
+        let loaded_functions = ffi::VmaVulkanFunctions {
+            vkGetInstanceProcAddr: instance.get_instance_proc_addr,
+            vkGetDeviceProcAddr: device.get_device_proc_addr,
+            vkGetPhysicalDeviceProperties: instance.get_physical_device_properties,
+            vkGetPhysicalDeviceMemoryProperties: instance.get_physical_device_memory_properties,
+            vkAllocateMemory: device.allocate_memory,
+            vkFreeMemory: device.free_memory,
+            vkMapMemory: device.map_memory,
+            vkUnmapMemory: device.unmap_memory,
+            vkFlushMappedMemoryRanges: device.flush_mapped_memory_ranges,
+            vkInvalidateMappedMemoryRanges: device.invalidate_mapped_memory_ranges,
+            vkBindBufferMemory: device.bind_buffer_memory,
+            vkBindImageMemory: device.bind_image_memory,
+            vkGetBufferMemoryRequirements: device.get_buffer_memory_requirements,
+            vkGetImageMemoryRequirements: device.get_image_memory_requirements,
+            vkCreateBuffer: device.create_buffer,
+            vkDestroyBuffer: device.destroy_buffer,
+            vkCreateImage: device.create_image,
+            vkDestroyImage: device.destroy_image,
+            vkCmdCopyBuffer: device.cmd_copy_buffer,
+            vkGetBufferMemoryRequirements2KHR: device.get_buffer_memory_requirements_2,
+            vkGetImageMemoryRequirements2KHR: device.get_image_memory_requirements_2,
+            vkBindBufferMemory2KHR: device.bind_buffer_memory_2,
+            vkBindImageMemory2KHR: device.bind_image_memory_2,
+            vkGetPhysicalDeviceMemoryProperties2KHR: instance
+                .get_physical_device_memory_properties_2,
+        };
 
-                let $load_to = ffi::VmaVulkanFunctions {
-                    vkGetInstanceProcAddr: get_instance_proc_addr_stub,
-                    vkGetDeviceProcAddr: get_get_device_proc_stub,
-                    $(
-                        $name_orig: $src.$name.unwrap_or($name as _)
-                    ),+
-                };
-            };
-        }
-
-        load_functions!(
-            routed_functions =
-            vkGetPhysicalDeviceProperties, instance: unsafe extern "system" fn get_physical_device_properties (
-                physical_device: pumice::vk10::PhysicalDevice,
-                p_properties: *mut pumice::vk10::PhysicalDeviceProperties,
-            ),
-            vkGetPhysicalDeviceMemoryProperties, instance: unsafe extern "system" fn get_physical_device_memory_properties (
-                physical_device: pumice::vk10::PhysicalDevice,
-                p_memory_properties: *mut pumice::vk10::PhysicalDeviceMemoryProperties,
-            ),
-            vkAllocateMemory, device: unsafe extern "system" fn allocate_memory (
-                device: pumice::vk10::Device,
-                p_allocate_info: *const pumice::vk10::MemoryAllocateInfo,
-                p_allocator: *const pumice::vk10::AllocationCallbacks,
-                p_memory: *mut pumice::vk10::DeviceMemory,
-            ) -> pumice::vk10::Result,
-            vkFreeMemory, device: unsafe extern "system" fn free_memory (
-                device: pumice::vk10::Device,
-                memory: pumice::vk10::DeviceMemory,
-                p_allocator: *const pumice::vk10::AllocationCallbacks,
-            ),
-            vkMapMemory, device: unsafe extern "system" fn map_memory (
-                device: pumice::vk10::Device,
-                memory: pumice::vk10::DeviceMemory,
-                offset: pumice::vk10::DeviceSize,
-                size: pumice::vk10::DeviceSize,
-                flags: pumice::vk10::MemoryMapFlags,
-                pp_data: *mut *mut std::os::raw::c_void,
-            ) -> pumice::vk10::Result,
-            vkUnmapMemory, device: unsafe extern "system" fn unmap_memory (
-                device: pumice::vk10::Device,
-                memory: pumice::vk10::DeviceMemory,
-            ),
-            vkFlushMappedMemoryRanges, device: unsafe extern "system" fn flush_mapped_memory_ranges (
-                device: pumice::vk10::Device,
-                memory_range_count: u32,
-                p_memory_ranges: *const pumice::vk10::MappedMemoryRange,
-            ) -> pumice::vk10::Result,
-            vkInvalidateMappedMemoryRanges, device: unsafe extern "system" fn invalidate_mapped_memory_ranges (
-                device: pumice::vk10::Device,
-                memory_range_count: u32,
-                p_memory_ranges: *const pumice::vk10::MappedMemoryRange,
-            ) -> pumice::vk10::Result,
-            vkBindBufferMemory, device: unsafe extern "system" fn bind_buffer_memory (
-                device: pumice::vk10::Device,
-                buffer: pumice::vk10::Buffer,
-                memory: pumice::vk10::DeviceMemory,
-                memory_offset: pumice::vk10::DeviceSize,
-                ) -> pumice::vk10::Result,
-            vkBindImageMemory, device: unsafe extern "system" fn bind_image_memory (
-                device: pumice::vk10::Device,
-                image: pumice::vk10::Image,
-                memory: pumice::vk10::DeviceMemory,
-                memory_offset: pumice::vk10::DeviceSize,
-            ) -> pumice::vk10::Result,
-            vkGetBufferMemoryRequirements, device: unsafe extern "system" fn get_buffer_memory_requirements (
-                device: pumice::vk10::Device,
-                buffer: pumice::vk10::Buffer,
-                p_memory_requirements: *mut pumice::vk10::MemoryRequirements,
-            ),
-            vkGetImageMemoryRequirements, device: unsafe extern "system" fn get_image_memory_requirements (
-                device: pumice::vk10::Device,
-                image: pumice::vk10::Image,
-                p_memory_requirements: *mut pumice::vk10::MemoryRequirements,
-            ),
-            vkCreateBuffer, device: unsafe extern "system" fn create_buffer (
-                device: pumice::vk10::Device,
-                p_create_info: *const pumice::vk10::BufferCreateInfo,
-                p_allocator: *const pumice::vk10::AllocationCallbacks,
-                p_buffer: *mut pumice::vk10::Buffer,
-            ) -> pumice::vk10::Result,
-            vkDestroyBuffer, device: unsafe extern "system" fn destroy_buffer (
-                device: pumice::vk10::Device,
-                buffer: pumice::vk10::Buffer,
-                p_allocator: *const pumice::vk10::AllocationCallbacks,
-            ),
-            vkCreateImage, device: unsafe extern "system" fn create_image (
-                    device: pumice::vk10::Device,
-                    p_create_info: *const pumice::vk10::ImageCreateInfo,
-                    p_allocator: *const pumice::vk10::AllocationCallbacks,
-                    p_image: *mut pumice::vk10::Image,
-            ) -> pumice::vk10::Result,
-            vkDestroyImage, device: unsafe extern "system" fn destroy_image (
-                device: pumice::vk10::Device,
-                image: pumice::vk10::Image,
-                p_allocator: *const pumice::vk10::AllocationCallbacks,
-            ),
-            vkCmdCopyBuffer, device: unsafe extern "system" fn cmd_copy_buffer (
-                command_buffer: pumice::vk10::CommandBuffer,
-                src_buffer: pumice::vk10::Buffer,
-                dst_buffer: pumice::vk10::Buffer,
-                region_count: u32,
-                p_regions: *const pumice::vk10::BufferCopy,
-            ),
-            vkGetBufferMemoryRequirements2KHR, device: unsafe extern "system" fn get_buffer_memory_requirements_2 (
-                device: pumice::vk10::Device,
-                p_info: *const pumice::vk11::BufferMemoryRequirementsInfo2,
-                p_memory_requirements: *mut pumice::vk11::MemoryRequirements2,
-            ),
-            vkGetImageMemoryRequirements2KHR, device: unsafe extern "system" fn get_image_memory_requirements_2 (
-                device: pumice::vk10::Device,
-                p_info: *const pumice::vk11::ImageMemoryRequirementsInfo2,
-                p_memory_requirements: *mut pumice::vk11::MemoryRequirements2,
-            ),
-            vkBindBufferMemory2KHR, device: unsafe extern "system" fn bind_buffer_memory_2 (
-                device: pumice::vk10::Device,
-                bind_info_count: u32,
-                p_bind_infos: *const pumice::vk11::BindBufferMemoryInfo,
-            ) -> pumice::vk10::Result,
-            vkBindImageMemory2KHR, device: unsafe extern "system" fn bind_image_memory_2 (
-                device: pumice::vk10::Device,
-                bind_info_count: u32,
-                p_bind_infos: *const pumice::vk11::BindImageMemoryInfo,
-            ) -> pumice::vk10::Result,
-            vkGetPhysicalDeviceMemoryProperties2KHR, instance: unsafe extern "system" fn get_physical_device_memory_properties_2 (
-                physical_device: pumice::vk10::PhysicalDevice,
-                p_memory_properties: *mut pumice::vk11::PhysicalDeviceMemoryProperties2,
-            )
-        );
-
-        create_info.inner.pVulkanFunctions = &routed_functions;
+        create_info.inner.pVulkanFunctions = &loaded_functions;
         unsafe {
             let mut internal: ffi::VmaAllocator = mem::zeroed();
             try_ffi_to_result!(ffi::vmaCreateAllocator(

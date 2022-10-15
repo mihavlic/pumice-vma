@@ -99,10 +99,10 @@ pub type PFN_vkDestroyBuffer = unsafe extern "system" fn(
 );
 
 pub type PFN_vkCreateImage = unsafe extern "system" fn(
-    device: pumice::vk10::Device,
-    p_create_info: *const pumice::vk10::ImageCreateInfo,
-    p_allocator: *const pumice::vk10::AllocationCallbacks,
-    p_image: *mut pumice::vk10::Image,
+        device: pumice::vk10::Device,
+        p_create_info: *const pumice::vk10::ImageCreateInfo,
+        p_allocator: *const pumice::vk10::AllocationCallbacks,
+        p_image: *mut pumice::vk10::Image,
 ) -> pumice::vk10::Result;
 
 pub type PFN_vkDestroyImage = unsafe extern "system" fn(
@@ -147,6 +147,47 @@ pub type PFN_vkGetPhysicalDeviceMemoryProperties2KHR = unsafe extern "system" fn
     physical_device: pumice::vk10::PhysicalDevice,
     p_memory_properties: *mut pumice::vk11::PhysicalDeviceMemoryProperties2,
 );
+
+// using the version promoted to Vulkan 1.1
+pub type ExternalMemoryHandleTypeFlagsKHR = ExternalMemoryHandleTypeFlags;
+
+#[doc = " \\brief Pointers to some Vulkan functions - a subset used by the library."]
+#[doc = ""]
+#[doc = "Used in VmaAllocatorCreateInfo::pVulkanFunctions."]
+#[doc = "Fields are wrapped in option to allow rust code to pass null function pointers so that they get loaded by VMA."]
+#[repr(C)]
+pub struct VmaVulkanFunctions {
+    #[doc = " Required when using VMA_DYNAMIC_VULKAN_FUNCTIONS."]
+    pub vkGetInstanceProcAddr: Option<PFN_vkGetInstanceProcAddr>,
+    #[doc = " Required when using VMA_DYNAMIC_VULKAN_FUNCTIONS."]
+    pub vkGetDeviceProcAddr: Option<PFN_vkGetDeviceProcAddr>,
+    pub vkGetPhysicalDeviceProperties: Option<PFN_vkGetPhysicalDeviceProperties>,
+    pub vkGetPhysicalDeviceMemoryProperties: Option<PFN_vkGetPhysicalDeviceMemoryProperties>,
+    pub vkAllocateMemory: Option<PFN_vkAllocateMemory>,
+    pub vkFreeMemory: Option<PFN_vkFreeMemory>,
+    pub vkMapMemory: Option<PFN_vkMapMemory>,
+    pub vkUnmapMemory: Option<PFN_vkUnmapMemory>,
+    pub vkFlushMappedMemoryRanges: Option<PFN_vkFlushMappedMemoryRanges>,
+    pub vkInvalidateMappedMemoryRanges: Option<PFN_vkInvalidateMappedMemoryRanges>,
+    pub vkBindBufferMemory: Option<PFN_vkBindBufferMemory>,
+    pub vkBindImageMemory: Option<PFN_vkBindImageMemory>,
+    pub vkGetBufferMemoryRequirements: Option<PFN_vkGetBufferMemoryRequirements>,
+    pub vkGetImageMemoryRequirements: Option<PFN_vkGetImageMemoryRequirements>,
+    pub vkCreateBuffer: Option<PFN_vkCreateBuffer>,
+    pub vkDestroyBuffer: Option<PFN_vkDestroyBuffer>,
+    pub vkCreateImage: Option<PFN_vkCreateImage>,
+    pub vkDestroyImage: Option<PFN_vkDestroyImage>,
+    pub vkCmdCopyBuffer: Option<PFN_vkCmdCopyBuffer>,
+    #[doc = " Fetch \"vkGetBufferMemoryRequirements2\" on Vulkan >= 1.1, fetch \"vkGetBufferMemoryRequirements2KHR\" when using VK_KHR_dedicated_allocation extension."]
+    pub vkGetBufferMemoryRequirements2KHR: Option<PFN_vkGetBufferMemoryRequirements2KHR>,
+    #[doc = " Fetch \"vkGetImageMemoryRequirements 2\" on Vulkan >= 1.1, fetch \"vkGetImageMemoryRequirements2KHR\" when using VK_KHR_dedicated_allocation extension."]
+    pub vkGetImageMemoryRequirements2KHR: Option<PFN_vkGetImageMemoryRequirements2KHR>,
+    #[doc = " Fetch \"vkBindBufferMemory2\" on Vulkan >= 1.1, fetch \"vkBindBufferMemory2KHR\" when using VK_KHR_bind_memory2 extension."]
+    pub vkBindBufferMemory2KHR: Option<PFN_vkBindBufferMemory2KHR>,
+    #[doc = " Fetch \"vkBindImageMemory2\" on Vulkan >= 1.1, fetch \"vkBindImageMemory2KHR\" when using VK_KHR_bind_memory2 extension."]
+    pub vkBindImageMemory2KHR: Option<PFN_vkBindImageMemory2KHR>,
+    pub vkGetPhysicalDeviceMemoryProperties2KHR: Option<PFN_vkGetPhysicalDeviceMemoryProperties2KHR>,
+}
 
 pub type __uint8_t = ::std::os::raw::c_uchar;
 pub type __int32_t = ::std::os::raw::c_int;
@@ -622,42 +663,6 @@ pub struct VmaDeviceMemoryCallbacks {
     pub pfnFree: PFN_vmaFreeDeviceMemoryFunction,
     #[doc = " Optional, can be null."]
     pub pUserData: *mut ::std::os::raw::c_void,
-}
-#[doc = " \\brief Pointers to some Vulkan functions - a subset used by the library."]
-#[doc = ""]
-#[doc = "Used in VmaAllocatorCreateInfo::pVulkanFunctions."]
-#[repr(C)]
-pub struct VmaVulkanFunctions {
-    #[doc = " Required when using VMA_DYNAMIC_VULKAN_FUNCTIONS."]
-    pub vkGetInstanceProcAddr: PFN_vkGetInstanceProcAddr,
-    #[doc = " Required when using VMA_DYNAMIC_VULKAN_FUNCTIONS."]
-    pub vkGetDeviceProcAddr: PFN_vkGetDeviceProcAddr,
-    pub vkGetPhysicalDeviceProperties: PFN_vkGetPhysicalDeviceProperties,
-    pub vkGetPhysicalDeviceMemoryProperties: PFN_vkGetPhysicalDeviceMemoryProperties,
-    pub vkAllocateMemory: PFN_vkAllocateMemory,
-    pub vkFreeMemory: PFN_vkFreeMemory,
-    pub vkMapMemory: PFN_vkMapMemory,
-    pub vkUnmapMemory: PFN_vkUnmapMemory,
-    pub vkFlushMappedMemoryRanges: PFN_vkFlushMappedMemoryRanges,
-    pub vkInvalidateMappedMemoryRanges: PFN_vkInvalidateMappedMemoryRanges,
-    pub vkBindBufferMemory: PFN_vkBindBufferMemory,
-    pub vkBindImageMemory: PFN_vkBindImageMemory,
-    pub vkGetBufferMemoryRequirements: PFN_vkGetBufferMemoryRequirements,
-    pub vkGetImageMemoryRequirements: PFN_vkGetImageMemoryRequirements,
-    pub vkCreateBuffer: PFN_vkCreateBuffer,
-    pub vkDestroyBuffer: PFN_vkDestroyBuffer,
-    pub vkCreateImage: PFN_vkCreateImage,
-    pub vkDestroyImage: PFN_vkDestroyImage,
-    pub vkCmdCopyBuffer: PFN_vkCmdCopyBuffer,
-    #[doc = " Fetch \"vkGetBufferMemoryRequirements2\" on Vulkan >= 1.1, fetch \"vkGetBufferMemoryRequirements2KHR\" when using VK_KHR_dedicated_allocation extension."]
-    pub vkGetBufferMemoryRequirements2KHR: PFN_vkGetBufferMemoryRequirements2KHR,
-    #[doc = " Fetch \"vkGetImageMemoryRequirements 2\" on Vulkan >= 1.1, fetch \"vkGetImageMemoryRequirements2KHR\" when using VK_KHR_dedicated_allocation extension."]
-    pub vkGetImageMemoryRequirements2KHR: PFN_vkGetImageMemoryRequirements2KHR,
-    #[doc = " Fetch \"vkBindBufferMemory2\" on Vulkan >= 1.1, fetch \"vkBindBufferMemory2KHR\" when using VK_KHR_bind_memory2 extension."]
-    pub vkBindBufferMemory2KHR: PFN_vkBindBufferMemory2KHR,
-    #[doc = " Fetch \"vkBindImageMemory2\" on Vulkan >= 1.1, fetch \"vkBindImageMemory2KHR\" when using VK_KHR_bind_memory2 extension."]
-    pub vkBindImageMemory2KHR: PFN_vkBindImageMemory2KHR,
-    pub vkGetPhysicalDeviceMemoryProperties2KHR: PFN_vkGetPhysicalDeviceMemoryProperties2KHR,
 }
 #[doc = " Description of a Allocator to be created."]
 #[repr(C)]
