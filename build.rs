@@ -105,7 +105,7 @@ fn main() {
     build.compile("vma_cpp");
 
     link_vulkan();
-    generate_bindings("gen/bindings.rs");
+    generate_bindings("src/ffi.rs");
 }
 
 #[cfg(feature = "link_vulkan")]
@@ -168,6 +168,7 @@ fn generate_bindings(output_file: &str) {
         .blocklist_type("VmaVulkanFunctions")
         .blocklist_type("Vk.*")
         .blocklist_type("PFN_vk.*")
+        .raw_line(META)
         .raw_line("use pumice::vk::*;")
         .raw_line(PFN_DEFINITIONS)
         .trust_clang_mangling(false)
@@ -202,6 +203,12 @@ impl bindgen::callbacks::ParseCallbacks for FixPumiceTypes {
         }
     }
 }
+
+#[cfg(feature = "generate_bindings")]
+const META: &str = r#"#![allow(non_upper_case_globals)]
+#![allow(non_camel_case_types)]
+#![allow(non_snake_case)]
+#![cfg_attr(feature = "cargo-clippy", allow(clippy::unreadable_literal))]"#;
 
 // at this time pumice does not generate type aliases for all function's function pointers so this must be done manually
 #[cfg(feature = "generate_bindings")]
