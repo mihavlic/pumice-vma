@@ -475,13 +475,12 @@ impl<'a> PoolCreateInfo<'a> {
     }
 }
 
-pub struct AllocationCreateInfo<'a> {
+pub struct AllocationCreateInfo {
     pub(crate) inner: ffi::VmaAllocationCreateInfo,
-    marker: ::std::marker::PhantomData<&'a ()>,
 }
 
-impl<'a> AllocationCreateInfo<'a> {
-    pub fn new() -> AllocationCreateInfo<'a> {
+impl<'a> AllocationCreateInfo {
+    pub fn new() -> AllocationCreateInfo {
         AllocationCreateInfo {
             inner: VmaAllocationCreateInfo {
                 flags: 0,
@@ -493,7 +492,6 @@ impl<'a> AllocationCreateInfo<'a> {
                 pUserData: ptr::null_mut(),
                 priority: 0.0,
             },
-            marker: ::std::marker::PhantomData,
         }
     }
 
