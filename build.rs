@@ -5,6 +5,10 @@ extern crate cc;
 use std::env;
 
 fn main() {
+    println!("cargo:rerun-if-changed=vendor/VulkanMemoryAllocator/include");
+    println!("cargo:rerun-if-changed=vendor/Vulkan-Headers/include/vulkan");
+    println!("cargo:rerun-if-changed=wrapper");
+
     let mut build = cc::Build::new();
 
     build.include("vendor/VulkanMemoryAllocator/include");
