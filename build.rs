@@ -2,8 +2,6 @@
 extern crate bindgen;
 extern crate cc;
 
-use std::env;
-
 fn main() {
     println!("cargo:rerun-if-changed=vendor/VulkanMemoryAllocator/include");
     println!("cargo:rerun-if-changed=vendor/Vulkan-Headers/include/vulkan");
@@ -49,62 +47,14 @@ fn main() {
         build.file(&source_file);
     }
 
-    let target = env::var("TARGET").unwrap();
-    if target.contains("darwin") {
-        build
-            .flag("-std=c++17")
-            .flag("-Wno-missing-field-initializers")
-            .flag("-Wno-unused-variable")
-            .flag("-Wno-unused-parameter")
-            .flag("-Wno-unused-private-field")
-            .flag("-Wno-reorder")
-            .flag("-Wno-nullability-completeness")
-            .cpp_link_stdlib("c++")
-            .cpp_set_stdlib("c++")
-            .cpp(true);
-    } else if target.contains("ios") {
-        build
-            .flag("-std=c++17")
-            .flag("-Wno-missing-field-initializers")
-            .flag("-Wno-unused-variable")
-            .flag("-Wno-unused-parameter")
-            .flag("-Wno-unused-private-field")
-            .flag("-Wno-reorder")
-            .cpp_link_stdlib("c++")
-            .cpp_set_stdlib("c++")
-            .cpp(true);
-    } else if target.contains("android") {
-        build
-            .flag("-std=c++17")
-            .flag("-Wno-missing-field-initializers")
-            .flag("-Wno-unused-variable")
-            .flag("-Wno-unused-parameter")
-            .flag("-Wno-unused-private-field")
-            .flag("-Wno-reorder")
-            .cpp_link_stdlib("c++")
-            .cpp(true);
-    } else if target.contains("linux") {
-        build
-            .flag("-std=c++17")
-            .flag("-Wno-missing-field-initializers")
-            .flag("-Wno-unused-variable")
-            .flag("-Wno-unused-parameter")
-            .flag("-Wno-unused-private-field")
-            .flag("-Wno-reorder")
-            .cpp_link_stdlib("stdc++")
-            .cpp(true);
-    } else if target.contains("windows") && target.contains("gnu") {
-        build
-            .flag("-std=c++17")
-            .flag("-Wno-missing-field-initializers")
-            .flag("-Wno-unused-variable")
-            .flag("-Wno-unused-parameter")
-            .flag("-Wno-unused-private-field")
-            .flag("-Wno-reorder")
-            .flag("-Wno-type-limits")
-            .cpp_link_stdlib("stdc++")
-            .cpp(true);
-    }
+    build
+        .flag("-std=c++17")
+        // disable all compiler warnings, as VMA has wontfix for anything regarding them
+        // https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator/issues/182
+        .flag("-w")
+        .cpp_link_stdlib("stdc++")
+        .warnings(false)
+        .cpp(true);
 
     build.compile("vma_cpp");
 
