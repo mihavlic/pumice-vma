@@ -55,7 +55,7 @@ impl TestHarness {
         let api_version = pumice::vk::make_api_version(0, 1, 0, 0);
 
         #[allow(unused_mut)]
-        let mut config = pumice::util::config::ApiLoadConfig::new(api_version);
+        let mut config = pumice::util::ApiLoadConfig::new(api_version);
         #[cfg(feature = "tests_debug_callback")]
         config.add_extension(pumice::extensions::ext_debug_report::EXT_DEBUG_REPORT_EXTENSION_NAME);
 
@@ -120,7 +120,7 @@ impl TestHarness {
                 .expect("Debug report callback creation error")
         };
 
-        let physical_devices = unsafe {
+        let (physical_devices, _) = unsafe {
             instance
                 .enumerate_physical_devices(None)
                 .expect("Physical device enumeration error")

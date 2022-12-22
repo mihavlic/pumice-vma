@@ -4,9 +4,9 @@ mod definitions;
 pub mod ffi;
 pub use definitions::*;
 
-use pumice::util::impl_macros::ObjectHandle;
-use pumice::util::result::VulkanResult;
+use pumice::util::ObjectHandle;
 use pumice::vk;
+use pumice::VulkanResult;
 use std::mem;
 
 /// Main allocator object
@@ -129,16 +129,14 @@ impl Default for AllocatorCreateFlags {
     }
 }
 
-/// Converts a raw result into an pumice result.
-#[inline]
-fn ffi_to_result(result: vk::Result) -> VulkanResult<()> {
-    VulkanResult::new(result, ())
+pub(crate) trait IntoVulkanResult {
+    fn into_result(self) -> VulkanResult<()>;
 }
 
-macro_rules! try_ffi_to_result {
-    ($e:expr) => {
-        pumice::try_vk!(VulkanResult::new($e, ()))
-    };
+impl IntoVulkanResult for vk::Result {
+    fn into_result(self) -> VulkanResult<()> {
+        pumice::new_result((), self)
+    }
 }
 
 #[derive(Debug)]
@@ -284,12 +282,10 @@ impl Allocator {
         create_info.inner.pVulkanFunctions = &loaded_functions;
         unsafe {
             let mut internal: ffi::VmaAllocator = mem::zeroed();
-            try_ffi_to_result!(ffi::vmaCreateAllocator(
-                &create_info.inner as *const _,
-                &mut internal,
-            ));
+            let _: () = ffi::vmaCreateAllocator(&create_info.inner as *const _, &mut internal)
+                .into_result()?;
 
-            VulkanResult::new_ok(Allocator { internal })
+            VulkanResult::Ok(Allocator { internal })
         }
     }
 
@@ -304,7 +300,7 @@ impl Allocator {
             &mut properties as *mut _ as *mut *const _,
         );
 
-        VulkanResult::new_ok(properties)
+        VulkanResult::Ok(properties)
     }
 
     /// The allocator fetches `pumice::vk::PhysicalDeviceMemoryProperties` from the physical device.
@@ -313,7 +309,7 @@ impl Allocator {
         let mut properties = vk::PhysicalDeviceMemoryProperties::default();
         ffi::vmaGetMemoryProperties(self.internal, &mut properties as *mut _ as *mut *const _);
 
-        VulkanResult::new_ok(properties)
+        VulkanResult::Ok(properties)
     }
 
     /// Given a memory type index, returns `pumice::vk::MemoryPropertyFlags` of this memory type.
@@ -327,7 +323,7 @@ impl Allocator {
         let mut flags = vk::MemoryPropertyFlags::empty();
         ffi::vmaGetMemoryTypeProperties(self.internal, memory_type_index, &mut flags);
 
-        VulkanResult::new_ok(flags)
+        VulkanResult::Ok(flags)
     }
 
     /// Sets index of the current frame.
@@ -344,7 +340,7 @@ impl Allocator {
     pub unsafe fn calculate_stats(&self) -> VulkanResult<ffi::VmaStats> {
         let mut vma_stats: ffi::VmaStats = mem::zeroed();
         ffi::vmaCalculateStats(self.internal, &mut vma_stats);
-        VulkanResult::new_ok(vma_stats)
+        VulkanResult::Ok(vma_stats)
     }
 
     /// Builds and returns statistics in `JSON` format.
@@ -356,7 +352,7 @@ impl Allocator {
             if detailed_map { 1 } else { 0 },
         );
 
-        VulkanResult::new_ok(if stats_string.is_null() {
+        VulkanResult::Ok(if stats_string.is_null() {
             String::new()
         } else {
             let result = std::ffi::CStr::from_ptr(stats_string)
@@ -387,14 +383,15 @@ impl Allocator {
         allocation_info: &AllocationCreateInfo,
     ) -> VulkanResult<u32> {
         let mut memory_type_index: u32 = 0;
-        try_ffi_to_result!(ffi::vmaFindMemoryTypeIndex(
+        ffi::vmaFindMemoryTypeIndex(
             self.internal,
             memory_type_bits,
             &allocation_info.inner,
             &mut memory_type_index,
-        ));
+        )
+        .into_result()?;
 
-        VulkanResult::new_ok(memory_type_index)
+        VulkanResult::Ok(memory_type_index)
     }
 
     /// Helps to find memory type index, given buffer info and allocation info.
@@ -413,14 +410,15 @@ impl Allocator {
         allocation_info: &AllocationCreateInfo,
     ) -> VulkanResult<u32> {
         let mut memory_type_index: u32 = 0;
-        try_ffi_to_result!(ffi::vmaFindMemoryTypeIndexForBufferInfo(
+        ffi::vmaFindMemoryTypeIndexForBufferInfo(
             self.internal,
             buffer_info,
             &allocation_info.inner,
             &mut memory_type_index,
-        ));
+        )
+        .into_result()?;
 
-        VulkanResult::new_ok(memory_type_index)
+        VulkanResult::Ok(memory_type_index)
     }
 
     /// Helps to find memory type index, given image info and allocation info.
@@ -439,25 +437,22 @@ impl Allocator {
         allocation_info: &AllocationCreateInfo,
     ) -> VulkanResult<u32> {
         let mut memory_type_index: u32 = 0;
-        try_ffi_to_result!(ffi::vmaFindMemoryTypeIndexForImageInfo(
+        ffi::vmaFindMemoryTypeIndexForImageInfo(
             self.internal,
             &image_info,
             &allocation_info.inner,
             &mut memory_type_index,
-        ));
+        )
+        .into_result()?;
 
-        VulkanResult::new_ok(memory_type_index)
+        VulkanResult::Ok(memory_type_index)
     }
 
     /// Allocates Vulkan device memory and creates `AllocatorPool` object.
     pub unsafe fn create_pool(&self, create_info: &PoolCreateInfo) -> VulkanResult<AllocatorPool> {
         let mut ffi_pool: ffi::VmaPool = mem::zeroed();
-        try_ffi_to_result!(ffi::vmaCreatePool(
-            self.internal,
-            &create_info.inner,
-            &mut ffi_pool,
-        ));
-        VulkanResult::new_ok(ffi_pool)
+        ffi::vmaCreatePool(self.internal, &create_info.inner, &mut ffi_pool).into_result()?;
+        VulkanResult::Ok(ffi_pool)
     }
 
     /// Destroys `AllocatorPool` object and frees Vulkan device memory.
@@ -469,7 +464,7 @@ impl Allocator {
     pub unsafe fn get_pool_stats(&self, pool: AllocatorPool) -> VulkanResult<ffi::VmaPoolStats> {
         let mut pool_stats: ffi::VmaPoolStats = mem::zeroed();
         ffi::vmaGetPoolStats(self.internal, pool, &mut pool_stats);
-        VulkanResult::new_ok(pool_stats)
+        VulkanResult::Ok(pool_stats)
     }
 
     /// Checks magic number in margins around all allocations in given memory pool in search for corruptions.
@@ -485,7 +480,7 @@ impl Allocator {
     ///   `VMA_ASSERT` is also fired in that case.
     /// - Other value: Error returned by Vulkan, e.g. memory mapping failure.
     pub unsafe fn check_pool_corruption(&self, pool: AllocatorPool) -> VulkanResult<()> {
-        ffi_to_result(ffi::vmaCheckPoolCorruption(self.internal, pool))
+        ffi::vmaCheckPoolCorruption(self.internal, pool).into_result()
     }
 
     /// General purpose memory allocation.
@@ -501,15 +496,16 @@ impl Allocator {
     ) -> VulkanResult<(Allocation, AllocationInfo)> {
         let mut allocation: Allocation = mem::zeroed();
         let mut allocation_info: AllocationInfo = mem::zeroed();
-        try_ffi_to_result!(ffi::vmaAllocateMemory(
+        ffi::vmaAllocateMemory(
             self.internal,
             memory_requirements,
             &create_info.inner,
             &mut allocation,
             &mut allocation_info.internal,
-        ));
+        )
+        .into_result()?;
 
-        VulkanResult::new_ok((allocation, allocation_info))
+        VulkanResult::Ok((allocation, allocation_info))
     }
 
     /// General purpose memory allocation for multiple allocation objects at once.
@@ -530,21 +526,22 @@ impl Allocator {
         let mut allocations: Vec<ffi::VmaAllocation> = vec![mem::zeroed(); allocation_count];
         let mut allocation_info: Vec<ffi::VmaAllocationInfo> =
             vec![mem::zeroed(); allocation_count];
-        try_ffi_to_result!(ffi::vmaAllocateMemoryPages(
+        ffi::vmaAllocateMemoryPages(
             self.internal,
             memory_requirements,
             &create_info.inner,
             allocation_count,
             allocations.as_mut_ptr(),
             allocation_info.as_mut_ptr(),
-        ));
+        )
+        .into_result()?;
 
         let it = allocations.iter().zip(allocation_info.iter());
         let allocations: Vec<(Allocation, AllocationInfo)> = it
             .map(|(alloc, info)| (*alloc, AllocationInfo { internal: *info }))
             .collect();
 
-        VulkanResult::new_ok(allocations)
+        VulkanResult::Ok(allocations)
     }
 
     /// Buffer specialized memory allocation.
@@ -557,15 +554,16 @@ impl Allocator {
     ) -> VulkanResult<(Allocation, AllocationInfo)> {
         let mut allocation: Allocation = mem::zeroed();
         let mut allocation_info: AllocationInfo = mem::zeroed();
-        try_ffi_to_result!(ffi::vmaAllocateMemoryForBuffer(
+        ffi::vmaAllocateMemoryForBuffer(
             self.internal,
             buffer,
             &create_info.inner,
             &mut allocation,
             &mut allocation_info.internal,
-        ));
+        )
+        .into_result()?;
 
-        VulkanResult::new_ok((allocation, allocation_info))
+        VulkanResult::Ok((allocation, allocation_info))
     }
 
     /// Image specialized memory allocation.
@@ -578,15 +576,16 @@ impl Allocator {
     ) -> VulkanResult<(Allocation, AllocationInfo)> {
         let mut allocation: Allocation = mem::zeroed();
         let mut allocation_info: AllocationInfo = mem::zeroed();
-        try_ffi_to_result!(ffi::vmaAllocateMemoryForImage(
+        ffi::vmaAllocateMemoryForImage(
             self.internal,
             image,
             &create_info.inner,
             &mut allocation,
             &mut allocation_info.internal,
-        ));
+        )
+        .into_result()?;
 
-        VulkanResult::new_ok((allocation, allocation_info))
+        VulkanResult::Ok((allocation, allocation_info))
     }
 
     /// Frees memory previously allocated using `Allocator::allocate_memory`,
@@ -631,7 +630,7 @@ impl Allocator {
     ) -> VulkanResult<AllocationInfo> {
         let mut allocation_info: AllocationInfo = mem::zeroed();
         ffi::vmaGetAllocationInfo(self.internal, allocation, &mut allocation_info.internal);
-        VulkanResult::new_ok(allocation_info)
+        VulkanResult::Ok(allocation_info)
     }
 
     /// Sets user data in given allocation to new value.
@@ -690,13 +689,9 @@ impl Allocator {
     /// `AllocationCreateFlags::CAN_BECOME_LOST` flag. Such allocations cannot be mapped.
     pub unsafe fn map_memory(&self, allocation: Allocation) -> VulkanResult<*mut u8> {
         let mut mapped_data: *mut ::std::os::raw::c_void = ::std::ptr::null_mut();
-        try_ffi_to_result!(ffi::vmaMapMemory(
-            self.internal,
-            allocation,
-            &mut mapped_data,
-        ));
+        ffi::vmaMapMemory(self.internal, allocation, &mut mapped_data).into_result()?;
 
-        VulkanResult::new_ok(mapped_data as *mut u8)
+        VulkanResult::Ok(mapped_data as *mut u8)
     }
 
     /// Unmaps memory represented by given allocation, mapped previously using `Allocator::map_memory`.
@@ -719,12 +714,13 @@ impl Allocator {
         offset: usize,
         size: usize,
     ) -> VulkanResult<()> {
-        ffi_to_result(ffi::vmaFlushAllocation(
+        ffi::vmaFlushAllocation(
             self.internal,
             allocation,
             offset as vk::DeviceSize,
             size as vk::DeviceSize,
-        ))
+        )
+        .into_result()
     }
 
     /// Invalidates memory of given allocation.
@@ -742,12 +738,13 @@ impl Allocator {
         offset: usize,
         size: usize,
     ) -> VulkanResult<()> {
-        ffi_to_result(ffi::vmaInvalidateAllocation(
+        ffi::vmaInvalidateAllocation(
             self.internal,
             allocation,
             offset as vk::DeviceSize,
             size as vk::DeviceSize,
-        ))
+        )
+        .into_result()
     }
 
     /// Checks magic number in margins around all allocations in given memory types (in both default and custom pools) in search for corruptions.
@@ -767,10 +764,7 @@ impl Allocator {
         &self,
         memory_types: pumice::vk::MemoryPropertyFlags,
     ) -> VulkanResult<()> {
-        ffi_to_result(ffi::vmaCheckCorruption(
-            self.internal,
-            memory_types.as_raw(),
-        ))
+        ffi::vmaCheckCorruption(self.internal, memory_types.as_raw()).into_result()
     }
 
     /// Begins defragmentation process.
@@ -831,14 +825,15 @@ impl Allocator {
             commandBuffer: command_buffer,
         };
 
-        try_ffi_to_result!(ffi::vmaDefragmentationBegin(
+        ffi::vmaDefragmentationBegin(
             self.internal,
             &ffi_info,
             &mut context.stats as *mut _,
             &mut context.internal,
-        ));
+        )
+        .into_result()?;
 
-        VulkanResult::new_ok(context)
+        VulkanResult::Ok(context)
     }
 
     /// Ends defragmentation process.
@@ -848,7 +843,7 @@ impl Allocator {
         &self,
         context: &mut DefragmentationContext,
     ) -> VulkanResult<(DefragmentationStats, Vec<bool>)> {
-        try_ffi_to_result!(ffi::vmaDefragmentationEnd(self.internal, context.internal));
+        ffi::vmaDefragmentationEnd(self.internal, context.internal).into_result()?;
 
         let changed: Vec<bool> = context.changed.iter().map(|change| *change == 1).collect();
 
@@ -859,7 +854,7 @@ impl Allocator {
             device_memory_blocks_freed: context.stats.deviceMemoryBlocksFreed,
         };
 
-        VulkanResult::new_ok((stats, changed))
+        VulkanResult::Ok((stats, changed))
     }
 
     /// Compacts memory by moving allocations.
@@ -924,14 +919,15 @@ impl Allocator {
         };
 
         let mut ffi_stats: ffi::VmaDefragmentationStats = mem::zeroed();
-        try_ffi_to_result!(ffi::vmaDefragment(
+        ffi::vmaDefragment(
             self.internal,
             allocations.as_ptr() as *mut _,
             allocations.len(),
             ffi_change_list.as_mut_ptr(),
             &ffi_info,
             &mut ffi_stats,
-        ));
+        )
+        .into_result()?;
 
         let change_list: Vec<bool> = ffi_change_list
             .iter()
@@ -945,7 +941,7 @@ impl Allocator {
             device_memory_blocks_freed: ffi_stats.deviceMemoryBlocksFreed,
         };
 
-        VulkanResult::new_ok((stats, change_list))
+        VulkanResult::Ok((stats, change_list))
     }
 
     /// Binds buffer to allocation.
@@ -966,7 +962,7 @@ impl Allocator {
         buffer: pumice::vk::Buffer,
         allocation: Allocation,
     ) -> VulkanResult<()> {
-        ffi_to_result(ffi::vmaBindBufferMemory(self.internal, allocation, buffer))
+        ffi::vmaBindBufferMemory(self.internal, allocation, buffer).into_result()
     }
 
     /// Binds image to allocation.
@@ -987,7 +983,7 @@ impl Allocator {
         image: pumice::vk::Image,
         allocation: Allocation,
     ) -> VulkanResult<()> {
-        ffi_to_result(ffi::vmaBindImageMemory(self.internal, allocation, image))
+        ffi::vmaBindImageMemory(self.internal, allocation, image).into_result()
     }
 
     /// This function automatically creates a buffer, allocates appropriate memory
@@ -1011,16 +1007,17 @@ impl Allocator {
         let mut buffer = vk::Buffer::null();
         let mut allocation: Allocation = mem::zeroed();
         let mut allocation_info: AllocationInfo = mem::zeroed();
-        try_ffi_to_result!(ffi::vmaCreateBuffer(
+        ffi::vmaCreateBuffer(
             self.internal,
             &*buffer_info,
             &allocation_create_info.inner,
             &mut buffer,
             &mut allocation,
             &mut allocation_info.internal,
-        ));
+        )
+        .into_result()?;
 
-        VulkanResult::new_ok((buffer, allocation, allocation_info))
+        VulkanResult::Ok((buffer, allocation, allocation_info))
     }
 
     /// Destroys Vulkan buffer and frees allocated memory.
@@ -1062,16 +1059,17 @@ impl Allocator {
         let mut image = vk::Image::null();
         let mut allocation: Allocation = mem::zeroed();
         let mut allocation_info: AllocationInfo = mem::zeroed();
-        try_ffi_to_result!(ffi::vmaCreateImage(
+        ffi::vmaCreateImage(
             self.internal,
             &*image_info,
             &allocation_create_info.inner,
             &mut image,
             &mut allocation,
             &mut allocation_info.internal,
-        ));
+        )
+        .into_result()?;
 
-        VulkanResult::new_ok((image, allocation, allocation_info))
+        VulkanResult::Ok((image, allocation, allocation_info))
     }
 
     /// Destroys Vulkan image and frees allocated memory.
