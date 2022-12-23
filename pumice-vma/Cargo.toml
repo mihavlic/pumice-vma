@@ -1,0 +1,51 @@
+[package]
+name = "pumice-vma"
+version = "0.1.0"
+authors = ["Michal Havlíček <mihavlic@protonmail.com>", "Graham Wihlidal <graham@wihlidal.ca>"]
+description = "Rust ffi bindings and idiomatic wrapper for AMD Vulkan Memory Allocator (VMA)"
+homepage = "https://github.com/mihavlic/pumice-vma"
+repository = "https://github.com/mihavlic/pumice-vma"
+documentation = "https://docs.rs/pumice-vma"
+readme = "README.md"
+keywords = ["vulkan", "vk", "pumice", "memory", "allocator"]
+categories = ["api-bindings", "rendering", "rendering::engine", "rendering::graphics-api", ]
+license = "MIT/Apache-2.0"
+build = "build.rs"
+include = [
+    "src/*.rs",
+    "gen/bindings.rs",
+    "build.rs",
+    "Cargo.toml",
+    "vendor/VulkanMemoryAllocator/include/vk_mem_alloc.h",
+    "vendor/Vulkan-Headers/include/vk_platform.h",
+    "vendor/Vulkan-Headers/include/vulkan_core.h",
+    "vendor/Vulkan-Headers/include/vulkan.h",
+    "wrapper/vma_lib.cpp",
+]
+edition = "2021"
+
+[dependencies]
+pumice = {path = "../../pumice", features = ["wrappers"]}
+bitflags = "1.2.1"
+
+[build-dependencies]
+cc = "1.0.50"
+generator = {path = "../generator", optional = true}
+
+[features]
+default = ["wrappers"]
+generate_bindings = ["generator"]
+wrappers = []
+link_vulkan = []
+# feature flags describing the generated vulkan bindings
+# this will impact the initialization of some field of `VulkanFunctions`
+# VK_VERSION_1_0 is implied
+VK_VERSION_1_1 = []
+VK_VERSION_1_3 = ["VK_VERSION_1_1"]
+VK_KHR_dedicated_allocation = []
+VK_KHR_bind_memory2 = []
+VK_KHR_get_physical_device_properties2 = []
+VK_KHR_maintenance4 = ["VK_VERSION_1_1"]
+VK_KHR_external_memory_capabilities = []
+# when enabled, tests/ will install a basic debug logger
+VK_EXT_debug_report = []

@@ -1,40 +1,38 @@
-extern crate pumice;
-extern crate pumice_vma;
-
 use pumice::{
     loader::{
         tables::{DeviceTable, EntryTable, InstanceTable},
         InstanceLoader,
     },
-    DeviceWrapper,
+    vk, DeviceWrapper,
 };
+use pumice_vma as vma;
 
-#[cfg(feature = "tests_debug_callback")]
+#[cfg(feature = "VK_EXT_debug_report")]
 unsafe extern "system" fn vulkan_debug_callback(
-    _: pumice::vk::DebugReportFlagsEXT,
-    _: pumice::vk::DebugReportObjectTypeEXT,
+    _: vk::DebugReportFlagsEXT,
+    _: vk::DebugReportObjectTypeEXT,
     _: u64,
     _: usize,
     _: i32,
     _: *const std::os::raw::c_char,
     p_message: *const std::os::raw::c_char,
-    _: *mut c_void,
+    _: *mut std::ffi::c_void,
 ) -> u32 {
     println!("{:?}", ::std::ffi::CStr::from_ptr(p_message));
-    pumice::vk::FALSE
+    vk::FALSE
 }
 
 pub struct TestHarness {
-    // if vulkan is loaded with libloading, the lifetime of the loaded library's memory is tied to this object so it must be preserved
-    pub loader: pumice::loader::EntryLoader,
     // these tables store the function pointers to all the vulkan commands
     pub tables: Box<(EntryTable, InstanceTable, DeviceTable)>,
     pub entry: pumice::EntryWrapper,
     pub instance: pumice::InstanceWrapper,
     pub device: pumice::DeviceWrapper,
-    pub physical_device: pumice::vk::PhysicalDevice,
-    #[cfg(feature = "tests_debug_callback")]
-    pub debug_callback: pumice::vk::DebugReportCallbackEXT,
+    pub physical_device: vk::PhysicalDevice,
+    #[cfg(feature = "VK_EXT_debug_report")]
+    pub debug_callback: vk::DebugReportCallbackEXT,
+    // if vulkan is loaded with libloading, the lifetime of the loaded library's memory is tied to this object so it must be preserved until the end
+    pub loader: pumice::loader::EntryLoader,
 }
 
 impl Drop for TestHarness {
@@ -42,7 +40,7 @@ impl Drop for TestHarness {
         unsafe {
             self.device.device_wait_idle().unwrap();
             self.device.destroy_device(None);
-            #[cfg(feature = "tests_debug_callback")]
+            #[cfg(feature = "VK_EXT_debug_report")]
             self.instance
                 .destroy_debug_report_callback_ext(self.debug_callback, None);
             self.instance.destroy_instance(None);
@@ -52,14 +50,14 @@ impl Drop for TestHarness {
 impl TestHarness {
     pub fn new() -> Self {
         let app_name = ::std::ffi::CString::new("vk-mem testing").unwrap();
-        let api_version = pumice::vk::make_api_version(0, 1, 0, 0);
+        let api_version = vk::make_api_version(0, 1, 0, 0);
 
         #[allow(unused_mut)]
         let mut config = pumice::util::ApiLoadConfig::new(api_version);
-        #[cfg(feature = "tests_debug_callback")]
+        #[cfg(feature = "VK_EXT_debug_report")]
         config.add_extension(pumice::extensions::ext_debug_report::EXT_DEBUG_REPORT_EXTENSION_NAME);
 
-        let app_info = pumice::vk::ApplicationInfo {
+        let app_info = vk::ApplicationInfo {
             p_application_name: app_name.as_ptr(),
             application_version: 0,
             p_engine_name: app_name.as_ptr(),
@@ -71,7 +69,7 @@ impl TestHarness {
         let layer_names = [pumice::cstr!("VK_LAYER_KHRONOS_validation").as_ptr()];
 
         let extension_names_raw = config.get_instance_extensions();
-        let create_info = pumice::vk::InstanceCreateInfo {
+        let create_info = vk::InstanceCreateInfo {
             p_application_info: &app_info,
             pp_enabled_layer_names: layer_names.as_ptr(),
             enabled_layer_count: layer_names.len() as _,
@@ -106,12 +104,12 @@ impl TestHarness {
 
         let instance = unsafe { pumice::InstanceWrapper::new(instance_handle, &tables.1) };
 
-        #[cfg(feature = "tests_debug_callback")]
+        #[cfg(feature = "VK_EXT_debug_report")]
         let debug_callback = unsafe {
-            let debug_info = pumice::vk::DebugReportCallbackCreateInfoEXT {
-                flags: pumice::vk::DebugReportFlagsEXT::ERROR
-                    | pumice::vk::DebugReportFlagsEXT::WARNING
-                    | pumice::vk::DebugReportFlagsEXT::PERFORMANCE_WARNING,
+            let debug_info = vk::DebugReportCallbackCreateInfoEXT {
+                flags: vk::DebugReportFlagsEXT::ERROR
+                    | vk::DebugReportFlagsEXT::WARNING
+                    | vk::DebugReportFlagsEXT::PERFORMANCE_WARNING,
                 pfn_callback: Some(vulkan_debug_callback),
                 ..Default::default()
             };
@@ -144,14 +142,14 @@ impl TestHarness {
 
         let priorities = [1.0];
 
-        let queue_info = [pumice::vk::DeviceQueueCreateInfo {
+        let queue_info = [vk::DeviceQueueCreateInfo {
             queue_family_index: queue_family_index as _,
             p_queue_priorities: priorities.as_ptr(),
             queue_count: priorities.len() as _,
             ..Default::default()
         }];
 
-        let device_create_info = pumice::vk::DeviceCreateInfo {
+        let device_create_info = vk::DeviceCreateInfo {
             p_queue_create_infos: queue_info.as_ptr(),
             queue_create_info_count: queue_info.len() as _,
             ..Default::default()
@@ -172,18 +170,28 @@ impl TestHarness {
             instance,
             device,
             physical_device,
-            #[cfg(feature = "tests_debug_callback")]
+            #[cfg(feature = "VK_EXT_debug_report")]
             debug_callback,
         }
     }
 
-    pub fn create_allocator(&self) -> pumice_vma::Allocator {
-        let create_info = pumice_vma::AllocatorCreateInfo::new(
-            &self.instance,
-            &self.device,
-            &self.physical_device,
-        );
-        pumice_vma::Allocator::new(create_info).unwrap()
+    pub fn create_allocator(&self) -> vma::AllocatorArc {
+        unsafe {
+            let create_info = vma::AllocatorCreateInfo2 {
+                instance: &self.instance,
+                device: &self.device,
+                physical_device: self.physical_device,
+                flags: vma::AllocatorCreateFlags::empty(),
+                preferred_large_heap_block_size: 1024 * 1024 * 32, // 32 MiB
+                allocation_callbacks: None,
+                device_memory_callbacks: None,
+                heap_size_limit: None,
+                vulkan_api_version: vk::API_VERSION_1_0,
+                external_memory_handle_types: None,
+            };
+
+            vma::Allocator::new_arc(&create_info).unwrap()
+        }
     }
 }
 
@@ -202,22 +210,22 @@ fn create_allocator() {
 fn create_gpu_buffer() {
     let harness = TestHarness::new();
     let allocator = harness.create_allocator();
-    let allocation_info =
-        pumice_vma::AllocationCreateInfo::new().usage(pumice_vma::MemoryUsage::GpuOnly);
 
     unsafe {
-        let (buffer, allocation, allocation_info) = allocator
+        let (buffer, allocation, _allocation_info) = allocator
             .create_buffer(
-                &pumice::vk::BufferCreateInfo {
+                &vk::BufferCreateInfo {
                     size: 16 * 1024,
-                    usage: pumice::vk::BufferUsageFlags::VERTEX_BUFFER
-                        | pumice::vk::BufferUsageFlags::TRANSFER_DST,
+                    usage: vk::BufferUsageFlags::VERTEX_BUFFER | vk::BufferUsageFlags::TRANSFER_DST,
                     ..Default::default()
                 },
-                &allocation_info,
+                &vma::AllocationCreateInfo {
+                    usage: vma::MemoryUsage::AutoPreferDevice,
+                    ..Default::default()
+                },
             )
             .unwrap();
-        assert_eq!(allocation_info.get_mapped_data(), std::ptr::null_mut());
+
         allocator.destroy_buffer(buffer, allocation);
     }
 }
@@ -226,26 +234,25 @@ fn create_gpu_buffer() {
 fn create_cpu_buffer_preferred() {
     let harness = TestHarness::new();
     let allocator = harness.create_allocator();
-    let allocation_info = pumice_vma::AllocationCreateInfo::new()
-        .required_flags(pumice::vk::MemoryPropertyFlags::HOST_VISIBLE)
-        .preferred_flags(
-            pumice::vk::MemoryPropertyFlags::HOST_COHERENT
-                | pumice::vk::MemoryPropertyFlags::HOST_CACHED,
-        )
-        .flags(pumice_vma::AllocationCreateFlags::MAPPED);
+
     unsafe {
         let (buffer, allocation, allocation_info) = allocator
             .create_buffer(
-                &pumice::vk::BufferCreateInfo {
+                &vk::BufferCreateInfo {
                     size: 16 * 1024,
-                    usage: pumice::vk::BufferUsageFlags::VERTEX_BUFFER
-                        | pumice::vk::BufferUsageFlags::TRANSFER_DST,
+                    usage: vk::BufferUsageFlags::VERTEX_BUFFER | vk::BufferUsageFlags::TRANSFER_DST,
                     ..Default::default()
                 },
-                &allocation_info,
+                &vma::AllocationCreateInfo {
+                    required_flags: vk::MemoryPropertyFlags::HOST_VISIBLE,
+                    preferred_flags: vk::MemoryPropertyFlags::HOST_COHERENT
+                        | vk::MemoryPropertyFlags::HOST_CACHED,
+                    flags: vma::AllocationCreateFlags::MAPPED,
+                    ..Default::default()
+                },
             )
             .unwrap();
-        assert_ne!(allocation_info.get_mapped_data(), std::ptr::null_mut());
+        assert_ne!(allocation_info.mapped_data, std::ptr::null_mut());
         allocator.destroy_buffer(buffer, allocation);
     }
 }
@@ -255,79 +262,94 @@ fn create_gpu_buffer_pool() {
     let harness = TestHarness::new();
     let allocator = harness.create_allocator();
 
-    let buffer_info = pumice::vk::BufferCreateInfo {
+    let buffer_info = vk::BufferCreateInfo {
         size: 16 * 1024,
-        usage: pumice::vk::BufferUsageFlags::UNIFORM_BUFFER
-            | pumice::vk::BufferUsageFlags::TRANSFER_DST,
+        usage: vk::BufferUsageFlags::UNIFORM_BUFFER | vk::BufferUsageFlags::TRANSFER_DST,
         ..Default::default()
     };
 
-    let mut allocation_info = pumice_vma::AllocationCreateInfo::new()
-        .required_flags(pumice::vk::MemoryPropertyFlags::HOST_VISIBLE)
-        .preferred_flags(
-            pumice::vk::MemoryPropertyFlags::HOST_COHERENT
-                | pumice::vk::MemoryPropertyFlags::HOST_CACHED,
-        )
-        .flags(pumice_vma::AllocationCreateFlags::MAPPED);
+    let mut allocation_info = vma::AllocationCreateInfo {
+        required_flags: vk::MemoryPropertyFlags::HOST_VISIBLE,
+        preferred_flags: vk::MemoryPropertyFlags::HOST_COHERENT
+            | vk::MemoryPropertyFlags::HOST_CACHED,
+        flags: vma::AllocationCreateFlags::MAPPED,
+        ..Default::default()
+    };
+
     unsafe {
         let memory_type_index = allocator
             .find_memory_type_index_for_buffer_info(&buffer_info, &allocation_info)
             .unwrap();
 
         // Create a pool that can have at most 2 blocks, 128 MiB each.
-        let pool_info = pumice_vma::PoolCreateInfo::new()
-            .memory_type_index(memory_type_index)
-            .block_size(128 * 1024 * 1024)
-            .max_block_count(2);
+        let pool_info = vma::PoolCreateInfo {
+            memory_type_index: memory_type_index,
+            block_size: 128 * 1024 * 1024,
+            max_block_count: 2,
+            ..Default::default()
+        };
 
         let pool = allocator.create_pool(&pool_info).unwrap();
-        allocation_info = allocation_info.pool(pool.clone());
+        allocation_info.pool = pool;
 
         let (buffer, allocation, allocation_info) = allocator
             .create_buffer(&buffer_info, &allocation_info)
             .unwrap();
-        assert_ne!(allocation_info.get_mapped_data(), std::ptr::null_mut());
+
+        assert_ne!(allocation_info.mapped_data, std::ptr::null_mut());
         allocator.destroy_buffer(buffer, allocation);
         allocator.destroy_pool(pool);
     }
 }
 
 #[test]
-fn test_gpu_stats() {
+fn test_gpu_budget() {
     let harness = TestHarness::new();
     let allocator = harness.create_allocator();
-    let allocation_info =
-        pumice_vma::AllocationCreateInfo::new().usage(pumice_vma::MemoryUsage::GpuOnly);
+
+    fn sum_budgets(budgets: Vec<vma::Budget>) -> vma::Budget {
+        // Budget is plain old data, this is ok
+        let mut budget: vma::Budget = unsafe { std::mem::zeroed() };
+        for b in budgets {
+            budget.statistics.block_count += b.statistics.block_count;
+            budget.statistics.allocation_count += b.statistics.allocation_count;
+            budget.statistics.block_bytes += b.statistics.block_bytes;
+            budget.statistics.allocation_bytes += b.statistics.allocation_bytes;
+            budget.usage += b.usage;
+            budget.budget += b.budget;
+        }
+        budget
+    }
 
     unsafe {
-        let stats_1 = allocator.calculate_stats().unwrap();
-        assert_eq!(stats_1.total.blockCount, 0);
-        assert_eq!(stats_1.total.allocationCount, 0);
-        assert_eq!(stats_1.total.usedBytes, 0);
+        let budget = sum_budgets(allocator.get_heap_budgets());
+        assert_eq!(budget.statistics.allocation_bytes, 0);
+        assert_eq!(budget.statistics.allocation_count, 0);
+        assert_eq!(budget.statistics.block_bytes, 0);
+        assert_eq!(budget.statistics.block_count, 0);
 
         let (buffer, allocation, _allocation_info) = allocator
             .create_buffer(
-                &pumice::vk::BufferCreateInfo {
+                &vk::BufferCreateInfo {
                     size: 16 * 1024,
-                    usage: pumice::vk::BufferUsageFlags::VERTEX_BUFFER
-                        | pumice::vk::BufferUsageFlags::TRANSFER_DST,
+                    usage: vk::BufferUsageFlags::VERTEX_BUFFER | vk::BufferUsageFlags::TRANSFER_DST,
                     ..Default::default()
                 },
-                &allocation_info,
+                &vma::AllocationCreateInfo {
+                    usage: vma::MemoryUsage::AutoPreferDevice,
+                    ..Default::default()
+                },
             )
             .unwrap();
 
-        let stats_2 = allocator.calculate_stats().unwrap();
-        assert_eq!(stats_2.total.blockCount, 1);
-        assert_eq!(stats_2.total.allocationCount, 1);
-        assert_eq!(stats_2.total.usedBytes, 16 * 1024);
+        let budget = sum_budgets(allocator.get_heap_budgets());
+        assert_eq!(budget.statistics.allocation_bytes, 16 * 1024);
+        assert_eq!(budget.statistics.allocation_count, 1);
 
         allocator.destroy_buffer(buffer, allocation);
 
-        let stats_3 = allocator.calculate_stats().unwrap();
-        assert_eq!(stats_3.total.blockCount, 1);
-        assert_eq!(stats_3.total.allocationCount, 0);
-        assert_eq!(stats_3.total.usedBytes, 0);
+        let budget = sum_budgets(allocator.get_heap_budgets());
+        assert_eq!(budget.statistics.block_count, 1);
     }
 }
 
@@ -336,32 +358,31 @@ fn test_stats_string() {
     let harness = TestHarness::new();
     let allocator = harness.create_allocator();
 
-    let allocation_info =
-        pumice_vma::AllocationCreateInfo::new().usage(pumice_vma::MemoryUsage::GpuOnly);
-
     unsafe {
-        let stats_1 = allocator.build_stats_string(true).unwrap();
-        assert!(stats_1.len() > 0);
+        let stats_1 = allocator.build_stats_string(true);
+        assert!(!stats_1.is_empty());
 
         let (buffer, allocation, _allocation_info) = allocator
             .create_buffer(
-                &pumice::vk::BufferCreateInfo {
+                &vk::BufferCreateInfo {
                     size: 16 * 1024,
-                    usage: pumice::vk::BufferUsageFlags::VERTEX_BUFFER
-                        | pumice::vk::BufferUsageFlags::TRANSFER_DST,
+                    usage: vk::BufferUsageFlags::VERTEX_BUFFER | vk::BufferUsageFlags::TRANSFER_DST,
                     ..Default::default()
                 },
-                &allocation_info,
+                &vma::AllocationCreateInfo {
+                    usage: vma::MemoryUsage::AutoPreferDevice,
+                    ..Default::default()
+                },
             )
             .unwrap();
 
-        let stats_2 = allocator.build_stats_string(true).unwrap();
+        let stats_2 = allocator.build_stats_string(true);
         assert!(stats_2.len() > 0);
         assert_ne!(stats_1, stats_2);
 
         allocator.destroy_buffer(buffer, allocation);
 
-        let stats_3 = allocator.build_stats_string(true).unwrap();
+        let stats_3 = allocator.build_stats_string(true);
         assert!(stats_3.len() > 0);
         assert_ne!(stats_3, stats_1);
         assert_ne!(stats_3, stats_2);

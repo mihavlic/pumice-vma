@@ -1,45 +1,10 @@
-[package]
-name = "pumice-vma"
-version = "0.1.0"
-authors = ["Michal Havlíček <mihavlic@protonmail.com>", "Graham Wihlidal <graham@wihlidal.ca>"]
-description = "Rust ffi bindings and idiomatic wrapper for AMD Vulkan Memory Allocator (VMA)"
-homepage = "https://github.com/mihavlic/pumice-vma"
-repository = "https://github.com/mihavlic/pumice-vma"
-documentation = "https://docs.rs/pumice-vma"
-readme = "README.md"
-keywords = ["vulkan", "vk", "pumice", "memory", "allocator"]
-categories = ["api-bindings", "rendering", "rendering::engine", "rendering::graphics-api", ]
-license = "MIT/Apache-2.0"
-build = "build.rs"
-include = [
-    "src/*.rs",
-    "gen/bindings.rs",
-    "build.rs",
-    "Cargo.toml",
-    "vendor/VulkanMemoryAllocator/include/vk_mem_alloc.h",
-    "vendor/Vulkan-Headers/include/vk_platform.h",
-    "vendor/Vulkan-Headers/include/vulkan_core.h",
-    "vendor/Vulkan-Headers/include/vulkan.h",
-    "wrapper/vma_lib.cpp",
+[workspace]
+members = [
+    "generator",
+    "pumice-vma"
 ]
-edition = "2018"
-
-[dependencies]
-pumice = {path = "../pumice", features = ["wrappers"]}
-bitflags = "1.2.1"
-
-[build-dependencies]
-cc = "1.0.50"
-bindgen = {version = "0.63.0", optional = true }
 
 [profile.release]
 lto = true
 opt-level = 3
 codegen-units = 1
-
-[features]
-default = []
-generate_bindings = ["bindgen"]
-link_vulkan = []
-recording = []
-tests_debug_callback = []

@@ -1,0 +1,12 @@
+[package]
+name = "generator"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+codewrite = { git = "https://github.com/mihavlic/pumice" }
+codewrite-macro = { git = "https://github.com/mihavlic/pumice" }
+clang = {version = "2.0.0", features = ["clang_10_0", "runtime"]}
+# whatever version `clang` pulls
+# we need this for `clang-sys::support::find()`
+clang-sys = "*"
