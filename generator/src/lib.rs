@@ -297,7 +297,7 @@ fn write_toplevel(w: &mut Writer, e: clang::Entity) {
                 code!(
                     w,
                     $comment
-                    #[derive(Clone, Copy, PartialEq, Eq, Hash)]
+                    #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
                     #[repr($underlying_type)]
                     pub enum $name {
                         $variants

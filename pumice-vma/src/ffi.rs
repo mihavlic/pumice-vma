@@ -512,7 +512,7 @@ pumice::bitflags_impl! {
     BUFFER_DEVICE_ADDRESS, EXT_MEMORY_PRIORITY
 }
 /// Intended usage of the allocated memory.
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 #[repr(u32)]
 pub enum MemoryUsage {
     /// No intended memory usage specified.
@@ -746,7 +746,7 @@ pumice::bitflags_impl! {
     ALGORITHM_EXTENSIVE, ALGORITHM_MASK
 }
 /// Operation performed on single defragmentation move. See structure`VmaDefragmentationMove.`
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 #[repr(u32)]
 pub enum DefragmentationMoveOperation {
     /// Buffer/image has been recreated at `dstTmpAllocation`, data has been copied, old buffer/image has been destroyed. `srcAllocation` should be changed to point to the new place. This is the default value set by vmaBeginDefragmentationPass().
