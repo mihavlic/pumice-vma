@@ -25,7 +25,7 @@ include = [
 edition = "2021"
 
 [dependencies]
-pumice = {path = "../../pumice", features = ["wrappers"]}
+pumice = {git = "https://github.com/mihavlic/vulkan-bindings.git", default-features = false, features = ["wrappers"]}
 bitflags = "1.2.1"
 
 [build-dependencies]
