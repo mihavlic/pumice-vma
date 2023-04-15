@@ -1,14 +1,13 @@
 extern crate cc;
 
 fn main() {
-    println!("cargo:rerun-if-changed=vendor/VulkanMemoryAllocator/include");
-    println!("cargo:rerun-if-changed=vendor/Vulkan-Headers/include/vulkan");
     println!("cargo:rerun-if-changed=wrapper");
 
     let mut build = cc::Build::new();
 
     build.include("vendor/VulkanMemoryAllocator/include");
     build.include("vendor/Vulkan-Headers/include/vulkan");
+    build.include("vendor/Vulkan-Headers/include");
     build.include("wrapper");
 
     // Disable VMA_ASSERT when rust assertions are disabled
